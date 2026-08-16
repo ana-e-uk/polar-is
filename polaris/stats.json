@@ -1,0 +1,33 @@
+{
+    "totals": {
+        "storage": 0,
+        "metadata": 0
+    },
+    "storage": {
+        "original": 0,
+        "aggregated":0,
+        "tmp_max": 0,
+        "number_of_files": 0,
+        "largest_file": {
+            "name": "",
+            "size": 0
+        },
+        "smallest_file": {
+            "name": "",
+            "size": 0
+        }
+    },
+    "metadata": {
+        "partitions_grid_file": 0,
+        "partition_metadata_files_total": 0,
+        "number_of_partitions": 0,
+        "largest_partition_file": {
+            "name": "",
+            "size": 0
+        },
+        "smallest_partition_file": {
+            "name": "",
+            "size": 0
+        }
+    }
+}

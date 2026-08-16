@@ -1,0 +1,60 @@
+\begin{document}
+
+\section{Overview}
+The first version of Polaris developed a single-dataset spatiotemporal index where preaggregated data was used as an index and to answer queries at different resolution levels. The second version of Polaris is a multidataset storage that stores data in spatial groups which we call \emph{buckets} and creates the hierarchical index of each bucket.
+
+Queries can ask for aggregate data, native data (the data from a dataset at its original resolution and with no alterations), and data combined from various datasets. Datasets have different CRSs, grids, domains, resolutions, variables, and dimensions, so it is nontrivial to combine them as well as aggregate, store, and index together. 
+
+This is why we keep native and aggregated data stored in an incomplete spatial pyramid with temporal pyramid versioning. Instead of storing all dataset data together (all data for a dataset for a continuous region at one resolution), we store data by predefined spatial buckets where each dataset is divided into these buckets and then aggregated. For datasets that are not in the same grid as the buckets, we can regrid the regular latitude-longitude grid to the dataset grid, and split the dataset data into these buckets. This way, when we receive a query (which is given on the regular latitude-longitude grid) we can find all the data that overlaps the query in space by looking at the buckets the query overlaps. In other words, we want any query that overlaps a bucket to have the data of all relevant datasets stored in that bucket.
+
+One query may overlap multiple buckets. Note this should be infrequent because the bucket boundaries are defined by the user to align with their queries. Combining the answer from multiple buckets is similar to combining aggregated data which is what Polaris does. While an additional block layer may increase execution time, it finds all the datasets at once, which decreases execution time. 
+
+
+\section{Definitions}
+\textbf{Common grid.} The regular Latitude-Longitude grid we use as spatial reference.
+
+\textbf{Bucket.} A rectangular region of the Earth. The set of all buckets cover the whole Earth. A bucket is defined on the \emph{common grid}. Each bucket can have one or more \emph{block/file} for a dataset, and multiple datasets. Buckets are defined by the user to account for the fact that some spatial regions will have more data.
+
+\textbf{Dataset.} Data from a specific repository generated or collected through a specific method.
+
+\textbf{Block.} A subset of a dataset that corresponds to the data that falls within a \emph{bucket}. 
+
+\textbf{File.} Stores a \emph{block} of data or a \textbf{chunk} of data if the \emph{block} size is too large for one file. A file only stores data from one \emph{block}.
+
+\textbf{Aggregate.} Precomputed aggregation of the data. Stored by \emph{bucket} defined for that data resolution.
+
+\section{Query Parameters}
+
+\subsection{Input}
+A query needs to contain the following input: ~1) A dataset, and ~2) A variable of interest. The dataset options are: each dataset independently, any available dataset combined to give an estimate answer, and any available datasets that provide an answer, but separately (not combined). A variablbe of interest has similar options: each variable of each dataset, variables that are defined as the same across different datasets combined, and variable shared amongst a set of datasets but treated independently. 
+
+\subsection{Optional Input}
+A query may also specify: 
+\begin{itemize}
+    \item The \emph{height} of the measurements. The default is set at surface level.
+    \item The temporal and spatial resolutions, which default to Day and $0.5^{\circ}$.
+    \item The time range, which defaults to all the time range of the chosen dataset and variable.
+    \item A spatial range in the form of a rectangular bounding box. The default is the whole world.
+    \item Additional dataset specific parameters that are also dimensions, for example pressure level, sensor band, ensemble member, etc..
+    \item The aggregate function to use out of minimum, maximum, and mean aggregates. If none is specified, the default is the mean.
+    \item The plots to return, defaulting to time series and heatmap.
+    \item A filter value and predicate that specify a filter query. The default is none.
+    \item The grid type that the user wants the data in. The default is the native data grid for individual datasets, and the common grid for combined data.
+\end{itemize}
+ 
+\section{Storage}
+The original (\emph{native}) data is stored in a file for now. The aggregate data is also stored in a file, though the files with aggregate data may cover a larger temporal and spatial range than the native data. The index is shared between the dataset variables because they are stored together based on spatial bucket.
+
+\subsection{Data Ingestion}
+The steps of data ingestion is to ~1) obtain data of interest from the user, ~2) download native data from remote repositories that correspond to the data of interest, ~3) aggregate to coarser resolutions within the native grid, ~4) discard data finer than is required by the user interest, ~5) update the index to include the new data, and finally ~6) generate a combined dataset if the available data overlaps.
+
+\begin{enumerate}
+    \item A user must give a list of the data of interest that specifies the data they are interested in and will likely analyze and query using Polaris. Each entry on the list specifies the variable, time range, spatial range (including height or similar parameter), and the expected finest resolution needed for that variable.
+    \item -
+    \item 
+\end{enumerate}
+
+\subsection{Shared Index}
+The index is a split of the world into rectangular bounding boxes we call \emph{buckets}. Each dataset gets divided into \emph{blocks} that fall within a bucket. When a query comes in, we see which bucket(s) it overlaps, and look at the blocks in these buckets. The spatial footprint/polygon of the dataset is not stored or indexed. Instead, other parameters (like time) are used to filter the candidate blocks, and then we can just scan the files with the remaining blocks and refine the spatial filtering then. Each bucket has a \emph{handle} that keeps metadata of each block in the bucket that acts as the second level of the index.
+
+\end{document}

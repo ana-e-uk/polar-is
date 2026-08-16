@@ -1,0 +1,77 @@
+# directories
+initialize_dir: storage/initialize/
+data_dir: storage/data/
+downloaded_data_dir: storage/data/tmp/downloaded/
+standardized_data_dir: storage/data/tmp/standardized/
+
+
+# direct file paths
+interests: storage/data/tmp/interests.csv
+requests: storage/data/tmp/requests.csv
+downloaded_data: storage/data/tmp/downloaded/downloaded_data.jsonl
+standardized_data: storage/data/tmp/standardized/standardized_metadata.jsonl
+metadata: storage/data/metadata.csv
+buckets: storage/data/buckets.json
+
+# dictionaries
+name_docs: {
+  "copernicusclimatedatastore": {
+    "era5_single_level": {
+      "grid": {
+        "type": "rectilinear",
+        "name": "regular",
+        "resolution": [0.25],
+        "units": "degrees"
+      },
+      "variables": {
+        "sea_surface_temperature": "sst"
+      },
+      "additional_parameters": {},
+      "temporal_sampling": ["1H"]
+    },
+    "carra_heigth": {
+      "grid": {
+        "type": "curvilinear",
+        "name": "lambert-conformal",
+        "resolution": [2.5],
+        "units": "km"
+      },
+      "variables": {
+        "sea_surface_temperature": "sst"
+      },
+      "additional_parameters": {
+        "height": ["15m", "30m"]
+      },
+      "temporal_sampling": ["3H", "1D"]
+    }
+  },
+  "nasaearthdata": {},
+  "noaancei": {
+    "emsst": {
+      "grid": {
+        "type": "rectilinear",
+        "name": "regular",
+        "resolution": [0.25],
+        "units": "degrees"
+      },
+      "variables": {
+        "sea_surface_temperature": "sst"
+      },
+      "additional_parameters": {},
+      "temporal_sampling": ["1D"]
+    },
+    "whoi_cdr": {
+      "grid": {
+        "type": "rectilinear",
+        "name": "regular",
+        "resolution": [0.25],
+        "units": "degrees"
+      },
+      "variables": {
+        "sea_surface_temperature": "sst"
+      },
+      "additional_parameters": {},
+      "temporal_sampling": ["3H"]
+    }
+  }
+}
