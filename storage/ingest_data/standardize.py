@@ -24,6 +24,9 @@ CSV with same columns as IN
 import pandas as pd
 import xarray as xr
 import json
+import datetime
+import random
+import string
 from uuid import uuid4
 from pathlib import Path
 from typing import Any
@@ -300,9 +303,21 @@ def sort_lat_lon(ds, lat_name="latitude", lon_name="longitude"):
     
     return ds
 
-def unique_output_path(tmp_dir):
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    return tmp_dir / f"standardized_{uuid4().hex}.nc"
+def unique_output_path(directory: Path, unique_type="uuid", extension="nc"):
+
+    directory.mkdir(parents=True, exist_ok=True)
+
+    if unique_type == "uuid":
+        return directory / f"{uuid4().hex}.{extension}"
+    
+    elif unique_type == "time":
+        time_stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        return directory / f"{time_stamp}.{extension}"
+    
+    elif unique_type == "random":
+        rand_str = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+        time = datetime.datetime.now()
+        return directory / f"{rand_str}_{time}.{extension}"
 
 def read_metadata(path: Path) -> list[dict[str, Any]]:
     """Read all metadata records."""
@@ -344,7 +359,7 @@ def standardize(records, tmp_dir, metadata_output) -> None:
                 data = validate_lat_lon(data)
 
             # Save info of new file
-            output_path = unique_output_path(tmp_dir)
+            output_path = unique_output_path(directory=tmp_dir, unique_type="time")
             data.to_netcdf(output_path)
 
         standardized_record = {
@@ -365,7 +380,6 @@ def standardize(records, tmp_dir, metadata_output) -> None:
 if __name__ == "__main__":
 
     settings = get_settings()
-
     data_to_add = settings.downloaded_data_
     records = read_metadata(data_to_add)
 

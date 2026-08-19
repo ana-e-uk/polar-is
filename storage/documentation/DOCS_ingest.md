@@ -9,10 +9,12 @@ Downloaded data is standardized as follows:
 * The longitude and latitude values are sorted if the grid is rectilinear
 * The grid type is added to the dataset metadata
 
-## Spliting data into the space buckets
-After data has been downloaded and standardized, we can ingest it into Polaris. First, we divide data into *blocks*, one for each of the space buckets. For data that is on the same regular latitude longitude grid as the buckets, we can split the data into their corresponding blocks by their coordinates. For data that is on a different grid, we map the *common grid* buckets to the dataset grid, determine which bucket(s) the data falls into (overlaps), and split the data into blocks with respect to these transformed boundaries.
+Standardization code is in **polar-is/ingest_data/standardize.py**
 
-This work is done by the script **~/polar-is/storage/**
+## Spliting data into the space buckets
+After data has been downloaded and standardized, we can ingest it into Polaris. First, we divide data into *blocks*, one block for each of the space buckets the dataset overlaps. For data that is on the same regular latitude longitude grid as the buckets, we can split the data into their corresponding blocks by their coordinates. For data that is on a different grid, we map the *common grid* buckets to the dataset grid, determine which bucket(s) each data cell center falls into (overlaps), and split the data into blocks with respect to these transformed boundaries.
+
+This work is done by the script **polar-is/storage/make_data_blocks**.
 
 ## Index data
 We save the information (metadata) of each bucket in a file titled the same as the bucket. The information for each bucket is as follows:

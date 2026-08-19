@@ -10,7 +10,7 @@ interests: storage/data/tmp/interests.csv
 requests: storage/data/tmp/requests.csv
 downloaded_data: storage/data/tmp/downloaded/downloaded_data.jsonl
 standardized_data: storage/data/tmp/standardized/standardized_metadata.jsonl
-metadata: storage/data/metadata.csv
+metadata: storage/data/metadata.jsonl
 buckets: storage/data/buckets.json
 
 # dictionaries

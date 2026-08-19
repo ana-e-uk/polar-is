@@ -33,26 +33,26 @@ def bucket_for_point(lon, lat):
 
     return f"r{row}_c{col}"
 
-def map_buckets(ds_grid):
+def map_buckets(ds):
     """Assign every native grid-cell center to one canonical space bucket.
 
-    ``ds_grid`` must contain standardized ``latitude`` and ``longitude``
-    coordinates. They may either both be two-dimensional on ``(y, x)`` for a
-    curvilinear grid, or be one-dimensional on ``y`` and ``x`` respectively
-    for a rectilinear grid.
+    IN: ``ds`` must contain standardized ``latitude`` and ``longitude``
+    coordinates.
 
-    The returned integer DataArray has dimensions ``(y, x)`` and contains
-    codes from 0 through 35, where ``code = row * N_COLS + col`` corresponds to
-    bucket ``r{row}_c{col}``. The input dataset and its data values are not
-    modified or regridded.
+    Generates a mapping of bucket codes for each data cell without regridding/
+    modifying data values. 
+    Currently, bucket codes are from 0-35 and ``code = row * N_COLS + col`` for
+    bucket id ``r{row}_c{col}``.
+
+    OUT: integer DataArray - dimensions ``(y, x)``
     """
-    if "latitude" not in ds_grid.coords or "longitude" not in ds_grid.coords:
+    if "latitude" not in ds.coords or "longitude" not in ds.coords:
         raise ValueError(
-            "ds_grid must contain latitude and longitude coordinates"
+            "ds must contain latitude and longitude coordinates"
         )
 
-    latitude = ds_grid["latitude"]
-    longitude = ds_grid["longitude"]
+    latitude = ds["latitude"]
+    longitude = ds["longitude"]
 
     if latitude.ndim == 1 and longitude.ndim == 1:
         if latitude.dims != ("y",) or longitude.dims != ("x",):
@@ -102,7 +102,7 @@ def map_buckets(ds_grid):
         "long_name": "canonical space bucket code",
         "valid_min": 0,
         "valid_max": N_ROWS * N_COLS - 1,
-        "bucket_id_formula": "r{code // N_COLS}_c{code % N_COLS}",
+        "bucket_code_formula": "r{id // N_COLS}_c{id % N_COLS}",
         "N_COLS": N_COLS,
     }
     return bucket_codes.transpose("y", "x")
@@ -119,10 +119,10 @@ def get_space_buckets():
             lat_min = LAT_MIN + row * LAT_SIZE
             lat_max = lat_min + LAT_SIZE
 
-            bucket_id = f"r{row}_c{col}"
+            bucket_code = f"r{row}_c{col}"
 
-            buckets[bucket_id] = {
-                "id": bucket_id,
+            buckets[bucket_code] = {
+                "id": bucket_code,
                 "row": row,
                 "col": col,
                 "bounds": {
