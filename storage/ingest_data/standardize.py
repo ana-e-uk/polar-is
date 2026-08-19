@@ -6,7 +6,7 @@ CSV with columns
     file_paths
     repository
     dataset
-    variable
+    variable - the variable name in the NetCDF file
     spatial_resolution
     temporal_resolution
     start_year
@@ -15,7 +15,7 @@ CSV with columns
     end_month
     region
     coordinates
-    additional_params
+    additional_params - includes region if region is not "COORDS"
 
 OUT: 
 Consolidated files with standardized units, coordinates, dimension names
@@ -39,6 +39,9 @@ from polaris.config import get_settings
 # - CF grid_mapping variable
 # - data variable's reference to that grid mapping
 # - CRS as WKT
+
+# TODO: assert the scientific variable name exists in the list of variables in
+# the dataset dictionary in config.
 
 
 def open_files(file_paths: list[str]) -> xr.Dataset:
@@ -263,6 +266,7 @@ def inspect_grid(ds: xr.Dataset) -> tuple[xr.Dataset, dict]:
     ds = ds.rename_vars(coordinate_rename)
 
     grid_info = {"grid_type": grid_type}
+    
 
     return ds, grid_info
 
@@ -319,6 +323,39 @@ def unique_output_path(directory: Path, unique_type="uuid", extension="nc"):
         time = datetime.datetime.now()
         return directory / f"{rand_str}_{time}.{extension}"
 
+def get_standard_var_name(
+    ds: xr.Dataset, record: dict[str, Any]
+) -> tuple[xr.Dataset, str]:
+    """Rename a dataset's scientific variable to its configured standard name."""
+    settings = get_settings()
+    name_in_dataset = record["variable"]
+
+    try:
+        standard_var_name = settings.name_docs[record["repository"]][
+            record["dataset"]
+        ]["variables"][name_in_dataset]
+    except KeyError as error:
+        raise ValueError(
+            "No standard variable mapping for "
+            f"{record['repository']}/{record['dataset']}/{name_in_dataset}"
+        ) from error
+
+    if name_in_dataset not in ds.data_vars:
+        raise ValueError(
+            f"Dataset variable {name_in_dataset!r} was not found; "
+            f"available data variables: {list(ds.data_vars)}"
+        )
+
+    if name_in_dataset != standard_var_name:
+        if standard_var_name in ds.variables:
+            raise ValueError(
+                f"Cannot rename {name_in_dataset!r} to {standard_var_name!r}: "
+                "the standard name already exists in the dataset"
+            )
+        ds = ds.rename_vars({name_in_dataset: standard_var_name})
+
+    return ds, standard_var_name
+
 def read_metadata(path: Path) -> list[dict[str, Any]]:
     """Read all metadata records."""
 
@@ -358,6 +395,12 @@ def standardize(records, tmp_dir, metadata_output) -> None:
             elif grid_info["grid_type"] == "curvilinear":
                 data = validate_lat_lon(data)
 
+            # Standardize variable name
+            data, standard_var_name = get_standard_var_name(
+                ds=data,
+                record=record,
+            )
+
             # Save info of new file
             output_path = unique_output_path(directory=tmp_dir, unique_type="time")
             data.to_netcdf(output_path)
@@ -368,6 +411,7 @@ def standardize(records, tmp_dir, metadata_output) -> None:
             "grid_type": grid_info["grid_type"],
         }
         standardized_record.pop("file_paths")
+        standardized_record["variable"] = standard_var_name
         standardized_metadata.append(standardized_record)
 
 

@@ -5,7 +5,7 @@ import numpy as np
 import xarray as xr
 
 from storage.ingest_data.make_data_blocks import (
-    bounding_rectangle,
+    block_bounds_and_extrema,
     make_data_blocks,
 )
 
@@ -15,7 +15,10 @@ def _source_dataset():
         data_vars={
             "value": (
                 ("timestamp", "y", "x"),
-                np.arange(12, dtype=np.float32).reshape(2, 2, 3),
+                [
+                    [[87.443, 99.20, 90.011], [88.11, 86.0, 97.512]],
+                    [[100.0, 94.87, 91.523], [92.0, 93.0, 95.0]],
+                ],
             ),
             "static_spatial": (
                 ("y", "x"),
@@ -41,6 +44,7 @@ def _source_dataset():
 def _record(source_path: Path):
     return {
         "dataset": "test-data",
+        "variable": "value",
         "coordinates": [0.0, 80.0, 0.0, 20.0],
         "grid_type": "curvilinear",
         "file_path": str(source_path),
@@ -51,8 +55,14 @@ def _read_json_lines(path: Path):
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
-def test_bounding_rectangle_with_rectilinear_coordinates():
+def test_block_bounds_and_extrema_with_rectilinear_coordinates():
     dataset = xr.Dataset(
+        data_vars={
+            "value": (
+                ("y", "x"),
+                [[0.0, 86.0, 0.0], [100.0, 90.0, 0.0], [0.0, 0.0, 0.0]],
+            )
+        },
         coords={
             "latitude": ("y", [-20.0, 10.0, 40.0]),
             "longitude": ("x", [10.0, 70.0, 130.0]),
@@ -63,11 +73,13 @@ def test_bounding_rectangle_with_rectilinear_coordinates():
         dims=("y", "x"),
     )
 
-    assert bounding_rectangle(dataset, mask) == {
+    assert block_bounds_and_extrema(dataset, mask, "value") == {
         "lat_min": -20.0,
         "lat_max": 10.0,
         "lon_min": 10.0,
         "lon_max": 70.0,
+        "var_min": 86.0,
+        "var_max": 100.0,
     }
 
 
@@ -91,22 +103,31 @@ def test_make_data_blocks_preserves_non_spatial_variables(tmp_path):
         assert record["dataset_bounds"] == [0.0, 80.0, 0.0, 20.0]
         assert "coordinates" not in record
         assert "bounds" not in record
-        assert set(record["block_bounds"]) == {
+        assert set(record["block_summary"]) == {
             "lat_min",
             "lat_max",
             "lon_min",
             "lon_max",
+            "var_min",
+            "var_max",
         }
         assert isinstance(record["file_path"], str)
 
         expected_longitude = (
             10.0 if record["bucket_id"] == "r3_c0" else 70.0
         )
-        assert record["block_bounds"] == {
+        expected_extrema = (
+            (86.0, 100.0)
+            if record["bucket_id"] == "r3_c0"
+            else (88.11, 99.20)
+        )
+        assert record["block_summary"] == {
             "lat_min": 10.0,
             "lat_max": 10.0,
             "lon_min": expected_longitude,
             "lon_max": expected_longitude,
+            "var_min": expected_extrema[0],
+            "var_max": expected_extrema[1],
         }
 
         block_path = Path(record["file_path"])
@@ -117,6 +138,56 @@ def test_make_data_blocks_preserves_non_spatial_variables(tmp_path):
             assert block["value"].dims == ("timestamp", "y", "x")
             assert block["static_spatial"].dims == ("y", "x")
             assert block["value"].isnull().any().item()
+
+
+def test_all_missing_extrema_are_none():
+    dataset = _source_dataset()
+    dataset["value"] = xr.full_like(dataset["value"], np.nan)
+    mask = xr.DataArray(
+        [[True, False, True], [False, True, False]],
+        dims=("y", "x"),
+    )
+
+    summary = block_bounds_and_extrema(dataset, mask, "value")
+
+    assert summary["var_min"] is None
+    assert summary["var_max"] is None
+    json.dumps(summary, allow_nan=False)
+
+
+def test_make_data_blocks_preserves_source_compression(tmp_path):
+    source_path = tmp_path / "compressed-source.nc"
+    dataset = _source_dataset()
+    dataset.to_netcdf(
+        source_path,
+        encoding={
+            "value": {
+                "zlib": True,
+                "complevel": 4,
+                "shuffle": True,
+                "chunksizes": (1, 2, 2),
+            }
+        },
+    )
+    output_directory = tmp_path / "blocks"
+    metadata_path = tmp_path / "metadata.jsonl"
+
+    make_data_blocks(
+        [_record(source_path)], output_directory, metadata_path
+    )
+
+    for record in _read_json_lines(metadata_path):
+        with xr.open_dataset(record["file_path"]) as block:
+            encoding = block["value"].encoding
+            assert encoding["zlib"] is True
+            assert encoding["complevel"] == 4
+            assert encoding["shuffle"] is True
+            assert all(
+                chunk_size <= block.sizes[dimension]
+                for chunk_size, dimension in zip(
+                    encoding["chunksizes"], block["value"].dims
+                )
+            )
 
 
 def test_make_data_blocks_rolls_back_after_failure(tmp_path):

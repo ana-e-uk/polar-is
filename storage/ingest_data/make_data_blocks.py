@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+from numbers import Real
 
 import numpy as np
 import xarray as xr
@@ -29,22 +30,34 @@ from polaris.config import get_settings
 
 
 def make_block_record(
-    record, bucket_code: int, bucket_id: str, block_bounds: dict, path: Path
+    record, bucket_code: int, bucket_id: str, block_summary: dict, path: Path
 ):
     """Add block-specific spatial and storage fields to a record."""
     return {
         **record,
         "bucket_code": bucket_code,
         "bucket_id": bucket_id,
-        "block_bounds": block_bounds,
+        "block_summary": block_summary,
         "file_path": str(path),
     }
 
 
-def bounding_rectangle(data: xr.Dataset, mask: xr.DataArray) -> dict:
-    """Return the loose lon/lat envelope of the selected cell centers."""
+def _finite_scalar_or_none(value):
+    """Convert an Xarray scalar to a JSON-safe Python scalar."""
+    scalar = value.compute().item()
+    if isinstance(scalar, Real) and not np.isfinite(scalar):
+        return None
+    return scalar
+
+
+def block_bounds_and_extrema(
+    data: xr.Dataset, mask: xr.DataArray, variable: str
+) -> dict:
+    """Return the loose lon/lat envelope of the selected cell centers
+    and the variable maxima.
+    """
     latitude, longitude = xr.broadcast(
-        data["latitude"], data["longitude"]
+        data["latitude"], data["longitude"],
     )
     latitude = latitude.transpose("y", "x")
     longitude = normalize_lon_to_bucket_grid(
@@ -53,13 +66,22 @@ def bounding_rectangle(data: xr.Dataset, mask: xr.DataArray) -> dict:
 
     selected_latitude = latitude.where(mask)
     selected_longitude = longitude.where(mask)
+    selected_values = data[variable].where(mask)
 
-    return {
+    bounds = {
         "lat_min": selected_latitude.min().compute().item(),
         "lat_max": selected_latitude.max().compute().item(),
         "lon_min": selected_longitude.min().compute().item(),
         "lon_max": selected_longitude.max().compute().item(),
+        "var_min": _finite_scalar_or_none(
+            selected_values.min(skipna=True)
+        ),
+        "var_max": _finite_scalar_or_none(
+            selected_values.max(skipna=True)
+        ),
     }
+
+    return bounds
 
 
 def spatially_crop_block(
@@ -80,7 +102,42 @@ def spatially_crop_block(
         if {"y", "x"}.issubset(variable.dims):
             block[variable_name] = variable.where(block_mask)
 
+        _preserve_compression(
+            source=data[variable_name],
+            target=block[variable_name],
+        )
+
     return block
+
+
+def _preserve_compression(
+    source: xr.DataArray, target: xr.DataArray
+) -> None:
+    """Copy compatible NetCDF compression settings to a cropped variable."""
+    for key in (
+        "zlib",
+        "complevel",
+        "shuffle",
+        "fletcher32",
+        "chunksizes",
+        "contiguous",
+    ):
+        target.encoding.pop(key, None)
+
+    if not source.encoding.get("zlib", False):
+        return
+
+    target.encoding["zlib"] = True
+    for key in ("complevel", "shuffle", "fletcher32"):
+        if key in source.encoding:
+            target.encoding[key] = source.encoding[key]
+
+    source_chunks = source.encoding.get("chunksizes")
+    if source_chunks is not None and len(source_chunks) == target.ndim:
+        target.encoding["chunksizes"] = tuple(
+            min(int(chunk_size), target.sizes[dimension])
+            for chunk_size, dimension in zip(source_chunks, target.dims)
+        )
 
 
 def _write_netcdf_atomically(block: xr.Dataset, output_path: Path) -> None:
@@ -125,12 +182,12 @@ def make_data_blocks(records, out_dir, metadata_path):
         for record in records:
             file_path = record["file_path"]
 
-            # All blocks retain the standardized dataset metadata. Rename its
-            # dataset-wide coordinates to distinguish them from block bounds.
+            # All blocks retain the standardized dataset metadata
             base_record = {**record}
             base_record.pop("file_path")
             if "coordinates" in base_record:
                 base_record["dataset_bounds"] = base_record.pop("coordinates")
+            record_variable = record["variable"]
 
             with xr.open_dataset(file_path) as data:
                 bucket_codes_mask = map_buckets(data)
@@ -140,7 +197,11 @@ def make_data_blocks(records, out_dir, metadata_path):
                     bucket_id = bucket_id_from_code(bucket_code)
                     mask = bucket_codes_mask == bucket_code
 
-                    block_bounds = bounding_rectangle(data, mask)
+                    block_summary = block_bounds_and_extrema(
+                        data=data,
+                        mask=mask,
+                        variable=record_variable,
+                    )
                     block = spatially_crop_block(data, mask)
 
                     bucket_directory = Path(out_dir, bucket_id)
@@ -156,7 +217,7 @@ def make_data_blocks(records, out_dir, metadata_path):
                             record=base_record,
                             bucket_code=bucket_code,
                             bucket_id=bucket_id,
-                            block_bounds=block_bounds,
+                            block_summary=block_summary,
                             path=output_path,
                         )
                     )

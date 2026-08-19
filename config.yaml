@@ -1,6 +1,6 @@
 # directories
 initialize_dir: storage/initialize/
-data_dir: storage/data/
+# data_dir: storage/data/
 downloaded_data_dir: storage/data/tmp/downloaded/
 standardized_data_dir: storage/data/tmp/standardized/
 
@@ -8,10 +8,16 @@ standardized_data_dir: storage/data/tmp/standardized/
 # direct file paths
 interests: storage/data/tmp/interests.csv
 requests: storage/data/tmp/requests.csv
-downloaded_data: storage/data/tmp/downloaded/downloaded_data.jsonl
-standardized_data: storage/data/tmp/standardized/standardized_metadata.jsonl
-metadata: storage/data/metadata.jsonl
+# downloaded_data: storage/data/tmp/downloaded/downloaded_data.jsonl
+# standardized_data: storage/data/tmp/standardized/standardized_metadata.jsonl
+# metadata: storage/data/metadata.jsonl
 buckets: storage/data/buckets.json
+
+# test
+data_dir: storage/data/tmp/carra-block-test/
+standardized_data: storage/data/tmp/standardized/carra_standardized_metadata.jsonl
+metadata: storage/data/tmp/carra-block-test/metadata.jsonl
+downloaded_data: storage/data/tmp/downloaded/carra_downloaded_data.jsonl
 
 # canonical space bucket grid
 bucket_grid:
@@ -31,12 +37,12 @@ name_docs: {
         "units": "degrees"
       },
       "variables": {
-        "sea_surface_temperature": "sst"
+        "sst": "sea_surface_temperature"
       },
       "additional_parameters": {},
       "temporal_sampling": ["1H"]
     },
-    "carra_heigth": {
+    "carra_height": {
       "grid": {
         "type": "curvilinear",
         "name": "lambert-conformal",
@@ -44,7 +50,7 @@ name_docs: {
         "units": "km"
       },
       "variables": {
-        "sea_surface_temperature": "sst"
+        "sst": "sea_surface_temperature"
       },
       "additional_parameters": {
         "height": ["15m", "30m"]
@@ -62,7 +68,7 @@ name_docs: {
         "units": "degrees"
       },
       "variables": {
-        "sea_surface_temperature": "sst"
+        "SST": "sea_surface_temperature"
       },
       "additional_parameters": {},
       "temporal_sampling": ["1D"]
@@ -75,7 +81,7 @@ name_docs: {
         "units": "degrees"
       },
       "variables": {
-        "sea_surface_temperature": "sst"
+        "sea_surface_temperature": "sea_surface_temperature"
       },
       "additional_parameters": {},
       "temporal_sampling": ["3H"]
