@@ -1,32 +1,32 @@
-# directories
+########### directories ###########
 initialize_dir: storage/initialize/
-# data_dir: storage/data/
+data_dir: storage/data/
 downloaded_data_dir: storage/data/tmp/downloaded/
 standardized_data_dir: storage/data/tmp/standardized/
 
 
-# direct file paths
+############ direct file paths ###########
 interests: storage/data/tmp/interests.csv
 requests: storage/data/tmp/requests.csv
-# downloaded_data: storage/data/tmp/downloaded/downloaded_data.jsonl
-# standardized_data: storage/data/tmp/standardized/standardized_metadata.jsonl
-# metadata: storage/data/metadata.jsonl
+downloaded_data: storage/data/tmp/downloaded/downloaded_data.jsonl
+standardized_data: storage/data/tmp/standardized/standardized_metadata.jsonl
+metadata: storage/data/metadata.jsonl
 buckets: storage/data/buckets.json
 
-# test
-data_dir: storage/data/tmp/carra-block-test/
-standardized_data: storage/data/tmp/standardized/carra_standardized_metadata.jsonl
-metadata: storage/data/tmp/carra-block-test/metadata.jsonl
-downloaded_data: storage/data/tmp/downloaded/carra_downloaded_data.jsonl
+############ test ###########
+# data_dir: storage/data/tmp/carra-block-test/
+# standardized_data: storage/data/tmp/standardized/carra_standardized_metadata.jsonl
+# metadata: storage/data/tmp/carra-block-test/metadata.jsonl
+# downloaded_data: storage/data/tmp/downloaded/carra_downloaded_data.jsonl
 
-# canonical space bucket grid
+############ canonical space bucket grid ###########
 bucket_grid:
   lon_min: 0
   lat_min: -90
   lon_size: 60
   lat_size: 30
 
-# dictionaries
+############ dictionaries ###########
 name_docs: {
   "copernicusclimatedatastore": {
     "era5_single_level": {

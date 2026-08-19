@@ -307,21 +307,37 @@ def sort_lat_lon(ds, lat_name="latitude", lon_name="longitude"):
     
     return ds
 
-def unique_output_path(directory: Path, unique_type="uuid", extension="nc"):
+def unique_output_path(directory: Path, unique_type="uuid", extension="nc", max_attempts=0):
 
     directory.mkdir(parents=True, exist_ok=True)
 
-    if unique_type == "uuid":
-        return directory / f"{uuid4().hex}.{extension}"
+    for _ in range(max_attempts):
+
+        if unique_type == "uuid":
+            fn = f"{uuid4().hex}.{extension}"
+        
+        elif unique_type == "time":
+            time_stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            fn = f"{time_stamp}.{extension}"
     
-    elif unique_type == "time":
-        time_stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        return directory / f"{time_stamp}.{extension}"
+        elif unique_type == "random":
+            rand_str = "".join(random.choices(string.ascii_letters + string.digits, k=4))
+            now = datetime.datetime.now()
+            ts = f"{now.day:02d}{now.microsecond:06d}"
+            fn = directory / f"{ts}_{rand_str}.{extension}"
+
+        else:
+            raise ValueError(
+                f"Unsupported unique path type: {unique_type!r}"
+            )
+
+        path = directory / fn
+        if not path.exists():
+            return path
     
-    elif unique_type == "random":
-        rand_str = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
-        time = datetime.datetime.now()
-        return directory / f"{rand_str}_{time}.{extension}"
+    raise ValueError(
+        f"Could not generate a unique output path after {max_attempts} attempts."
+    )
 
 def get_standard_var_name(
     ds: xr.Dataset, record: dict[str, Any]
