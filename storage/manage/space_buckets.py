@@ -187,7 +187,7 @@ def get_space_buckets():
                     "lat_min": lat_min,
                     "lat_max": lat_max,
                 },
-                "data": [],
+                "data": 0,
             }
 
     settings = get_settings()

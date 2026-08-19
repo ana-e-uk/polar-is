@@ -307,7 +307,12 @@ def sort_lat_lon(ds, lat_name="latitude", lon_name="longitude"):
     
     return ds
 
-def unique_output_path(directory: Path, unique_type="uuid", extension="nc", max_attempts=0):
+def unique_output_path(
+    directory: Path,
+    unique_type="uuid",
+    extension="nc",
+    max_attempts=10,
+):
 
     directory.mkdir(parents=True, exist_ok=True)
 
@@ -324,7 +329,7 @@ def unique_output_path(directory: Path, unique_type="uuid", extension="nc", max_
             rand_str = "".join(random.choices(string.ascii_letters + string.digits, k=4))
             now = datetime.datetime.now()
             ts = f"{now.day:02d}{now.microsecond:06d}"
-            fn = directory / f"{ts}_{rand_str}.{extension}"
+            fn = f"{ts}_{rand_str}.{extension}"
 
         else:
             raise ValueError(

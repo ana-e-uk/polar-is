@@ -7,6 +7,7 @@ import xarray as xr
 from storage.ingest_data.make_data_blocks import (
     block_bounds_and_extrema,
     make_data_blocks,
+    update_bucket_file_counts,
 )
 
 
@@ -55,6 +56,15 @@ def _read_json_lines(path: Path):
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
+def _bucket_definitions(path: Path):
+    buckets = {
+        "r3_c0": {"id": "r3_c0", "data": 0},
+        "r3_c1": {"id": "r3_c1", "data": 0},
+    }
+    path.write_text(json.dumps(buckets))
+    return path
+
+
 def test_block_bounds_and_extrema_with_rectilinear_coordinates():
     dataset = xr.Dataset(
         data_vars={
@@ -88,9 +98,13 @@ def test_make_data_blocks_preserves_non_spatial_variables(tmp_path):
     _source_dataset().to_netcdf(source_path)
     output_directory = tmp_path / "blocks"
     metadata_path = tmp_path / "metadata.jsonl"
+    buckets_path = _bucket_definitions(tmp_path / "buckets.json")
 
     make_data_blocks(
-        [_record(source_path)], output_directory, metadata_path
+        [_record(source_path)],
+        output_directory,
+        metadata_path,
+        buckets_path,
     )
 
     records = _read_json_lines(metadata_path)
@@ -139,6 +153,10 @@ def test_make_data_blocks_preserves_non_spatial_variables(tmp_path):
             assert block["static_spatial"].dims == ("y", "x")
             assert block["value"].isnull().any().item()
 
+    buckets = json.loads(buckets_path.read_text())
+    assert buckets["r3_c0"]["data"] == 1
+    assert buckets["r3_c1"]["data"] == 1
+
 
 def test_all_missing_extrema_are_none():
     dataset = _source_dataset()
@@ -171,9 +189,13 @@ def test_make_data_blocks_preserves_source_compression(tmp_path):
     )
     output_directory = tmp_path / "blocks"
     metadata_path = tmp_path / "metadata.jsonl"
+    buckets_path = _bucket_definitions(tmp_path / "buckets.json")
 
     make_data_blocks(
-        [_record(source_path)], output_directory, metadata_path
+        [_record(source_path)],
+        output_directory,
+        metadata_path,
+        buckets_path,
     )
 
     for record in _read_json_lines(metadata_path):
@@ -195,6 +217,8 @@ def test_make_data_blocks_rolls_back_after_failure(tmp_path):
     _source_dataset().to_netcdf(source_path)
     output_directory = tmp_path / "blocks"
     metadata_path = tmp_path / "metadata.jsonl"
+    buckets_path = _bucket_definitions(tmp_path / "buckets.json")
+    original_buckets = buckets_path.read_text()
     original_metadata = '{"existing": true}\n'
     metadata_path.write_text(original_metadata)
     records = [
@@ -203,12 +227,39 @@ def test_make_data_blocks_rolls_back_after_failure(tmp_path):
     ]
 
     try:
-        make_data_blocks(records, output_directory, metadata_path)
+        make_data_blocks(
+            records,
+            output_directory,
+            metadata_path,
+            buckets_path,
+        )
     except FileNotFoundError:
         pass
     else:
         raise AssertionError("Missing input file did not fail")
 
     assert metadata_path.read_text() == original_metadata
+    assert buckets_path.read_text() == original_buckets
     assert not list(output_directory.rglob("*.nc"))
     assert not list(output_directory.rglob("*.partial"))
+
+
+def test_update_bucket_file_counts_recomputes_from_disk(tmp_path):
+    output_directory = tmp_path / "blocks"
+    first_bucket = output_directory / "r3_c0"
+    first_bucket.mkdir(parents=True)
+    (first_bucket / "first.nc").touch()
+    (first_bucket / "second.nc").touch()
+    (first_bucket / "not-a-block.txt").touch()
+    buckets_path = _bucket_definitions(tmp_path / "buckets.json")
+    buckets = json.loads(buckets_path.read_text())
+    buckets["r3_c0"]["data"] = 999
+    buckets["r3_c1"]["data"] = 999
+    buckets_path.write_text(json.dumps(buckets))
+
+    update_bucket_file_counts(output_directory, buckets_path)
+
+    updated = json.loads(buckets_path.read_text())
+    assert updated["r3_c0"]["data"] == 2
+    assert updated["r3_c1"]["data"] == 0
+    assert not list(tmp_path.glob("*.partial"))

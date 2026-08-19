@@ -6,6 +6,7 @@ corresponding to one bucket will be stored together in one
 file. This group of cells is called a block. A dataset may
 have multiple blocks. 
 """
+import json
 import os
 from pathlib import Path
 import shutil
@@ -173,7 +174,69 @@ def _append_metadata_atomically(metadata_path: Path, records: list) -> None:
         raise
 
 
-def make_data_blocks(records, out_dir, metadata_path):
+def _read_bucket_definitions(buckets_path: Path) -> dict:
+    """Read and minimally validate the canonical bucket definitions."""
+    buckets_path = Path(buckets_path)
+    with buckets_path.open(encoding="utf-8") as file:
+        buckets = json.load(file)
+
+    if not isinstance(buckets, dict) or not buckets:
+        raise ValueError(f"Invalid or empty bucket definitions: {buckets_path}")
+    return buckets
+
+
+def update_bucket_file_counts(out_dir, buckets_path) -> None:
+    """Atomically refresh each bucket's derived NetCDF file count."""
+    out_dir = Path(out_dir)
+    buckets_path = Path(buckets_path)
+    buckets = _read_bucket_definitions(buckets_path)
+
+    for bucket_id, bucket in buckets.items():
+        if not isinstance(bucket, dict):
+            raise ValueError(f"Invalid definition for bucket {bucket_id!r}")
+
+        bucket_directory = out_dir / bucket_id
+        bucket["data"] = (
+            sum(
+                path.is_file()
+                for path in bucket_directory.glob("*.nc")
+            )
+            if bucket_directory.is_dir()
+            else 0
+        )
+
+    buckets_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=buckets_path.parent,
+        prefix=f".{buckets_path.name}.",
+        suffix=".partial",
+    )
+    os.close(descriptor)
+    temporary_path = Path(temporary_name)
+
+    try:
+        with temporary_path.open("w", encoding="utf-8") as file:
+            json.dump(buckets, file, indent=2)
+            file.write("\n")
+            file.flush()
+            os.fsync(file.fileno())
+        temporary_path.replace(buckets_path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def make_data_blocks(
+    records,
+    out_dir,
+    metadata_path,
+    buckets_path=None,
+):
+    if buckets_path is None:
+        buckets_path = get_settings().buckets_
+    buckets_path = Path(buckets_path)
+    available_bucket_ids = set(_read_bucket_definitions(buckets_path))
+
     block_metadata = []
     created_paths = []
 
@@ -195,6 +258,10 @@ def make_data_blocks(records, out_dir, metadata_path):
                 for raw_bucket_code in np.unique(bucket_codes_mask.values):
                     bucket_code = int(raw_bucket_code)
                     bucket_id = bucket_id_from_code(bucket_code)
+                    if bucket_id not in available_bucket_ids:
+                        raise ValueError(
+                            f"Bucket {bucket_id!r} is missing from {buckets_path}"
+                        )
                     mask = bucket_codes_mask == bucket_code
 
                     block_summary = block_bounds_and_extrema(
@@ -227,6 +294,18 @@ def make_data_blocks(records, out_dir, metadata_path):
         for created_path in created_paths:
             created_path.unlink(missing_ok=True)
         raise
+
+    # Counts are derived and non-authoritative. Refresh them only after block
+    # files and metadata have committed. If this update fails, valid blocks and
+    # metadata remain in place and the counts can be recomputed later.
+    try:
+        update_bucket_file_counts(out_dir, buckets_path)
+    except Exception as error:
+        raise RuntimeError(
+            "Block files and metadata committed successfully, but bucket file "
+            "counts could not be refreshed. Do not rerun ingestion; call "
+            "update_bucket_file_counts() after resolving the count error."
+        ) from error
 
 if __name__ == "__main__":
 
