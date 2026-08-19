@@ -1,7 +1,20 @@
 import numpy as np
 import xarray as xr
 
-from storage.manage.space_buckets import map_buckets
+from storage.manage.space_buckets import bucket_id_from_code, map_buckets
+
+
+def test_bucket_id_from_code():
+    assert bucket_id_from_code(0) == "r0_c0"
+    assert bucket_id_from_code(np.int8(35)) == "r5_c5"
+
+    for invalid_code in (-1, 36):
+        try:
+            bucket_id_from_code(invalid_code)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"Invalid bucket code accepted: {invalid_code}")
 
 
 def test_map_rectilinear_cell_centers():

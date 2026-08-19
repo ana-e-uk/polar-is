@@ -20,6 +20,8 @@ class Settings:
     standardized_data_: Path
     metadata_: Path
     buckets_: Path
+    # canonical bucket grid
+    bucket_grid: dict
     # dictionaries
     name_docs: dict
 
@@ -39,5 +41,6 @@ def get_settings() -> Settings:
         standardized_data_=PROJECT_ROOT / raw["standardized_data"],
         metadata_=PROJECT_ROOT / raw["metadata"],
         buckets_=PROJECT_ROOT / raw["buckets"],
+        bucket_grid=raw["bucket_grid"],
         name_docs=raw.get("name_docs", {}),
     )

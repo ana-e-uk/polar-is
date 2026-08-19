@@ -1,7 +1,7 @@
 # System Management Documentation
 
 ## Dividing space into **buckets**
-Currently, we split the world into latitude longitude rectangular regions of size 60 longitude and 30 latitude. This results in 36 groups, or buckets that are defined in **~/polar-is/storage/data/buckets.json**. The buckets are defined on a regular latitude longitude grid projection. This world-wide projection allows us to map any regional projection to the same space.
+The bucket-grid origin and longitude/latitude bucket sizes are configured under `bucket_grid` in **~/polar-is/config.yaml**. The configured sizes must divide 360 degrees longitude and 180 degrees latitude exactly. The resulting groups are defined in **~/polar-is/storage/data/buckets.json**. The buckets are defined on a regular latitude-longitude grid, allowing datasets to be mapped to the same canonical space.
 
 This json file has the name: "r{row index}_c{column index}" of each bucket. Each bucket contains:
 * "id" - (string) the name of the bucket

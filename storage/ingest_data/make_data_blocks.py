@@ -6,101 +6,166 @@ corresponding to one bucket will be stored together in one
 file. This group of cells is called a block. A dataset may
 have multiple blocks. 
 """
-import xarray as xr
+import os
 from pathlib import Path
-import numpy as np
+import shutil
+import tempfile
 
-from storage.manage.space_buckets import map_buckets, N_COLS
-from storage.ingest_data.standardize import read_metadata, write_metadata, unique_output_path
+import numpy as np
+import xarray as xr
+
+from storage.manage.space_buckets import (
+    bucket_id_from_code,
+    map_buckets,
+    normalize_lon_to_bucket_grid,
+)
+from storage.ingest_data.standardize import (
+    read_metadata,
+    unique_output_path,
+    write_metadata,
+)
 
 from polaris.config import get_settings
 
 
-def make_block_record(record, bucket: str, bounds: list, path: Path):
-    """Generate a block record .
-    
-    Add block-specific region, coordinates, bucket_code and file_path
-    """
-    block_record = {
+def make_block_record(
+    record, bucket_code: int, bucket_id: str, block_bounds: dict, path: Path
+):
+    """Add block-specific spatial and storage fields to a record."""
+    return {
         **record,
-        "bucket_code": bucket,
-        "bounds": bounds,
-        "file_path": path
+        "bucket_code": bucket_code,
+        "bucket_id": bucket_id,
+        "block_bounds": block_bounds,
+        "file_path": str(path),
     }
-    return block_record
 
-def bounding_rectangle(block: xr.Dataset) -> list:
-    """Find a bounding rectangle of the data cells in a block.
-    
-    This can be used to further filter the blocks in a bucket
-    during a query.
-    """
-    # TODO: make sure this works for 2D and 1D coordinates. May need to pass in dataset grid type
-    min_lat = block["latitude"].min()
-    max_lat = block["latitude"].max()
-    min_lon = block["longitude"].min()
-    max_lon = block["longitude"].max()
 
-    return [min_lat, max_lat, min_lon, max_lon]
+def bounding_rectangle(data: xr.Dataset, mask: xr.DataArray) -> dict:
+    """Return the loose lon/lat envelope of the selected cell centers."""
+    latitude, longitude = xr.broadcast(
+        data["latitude"], data["longitude"]
+    )
+    latitude = latitude.transpose("y", "x")
+    longitude = normalize_lon_to_bucket_grid(
+        longitude.transpose("y", "x")
+    )
 
-def calc_bucket_id(code):
-    row = code // N_COLS
-    col = code % N_COLS
-    return f"r{row}_c{col}"
+    selected_latitude = latitude.where(mask)
+    selected_longitude = longitude.where(mask)
+
+    return {
+        "lat_min": selected_latitude.min().compute().item(),
+        "lat_max": selected_latitude.max().compute().item(),
+        "lon_min": selected_longitude.min().compute().item(),
+        "lon_max": selected_longitude.max().compute().item(),
+    }
+
+
+def spatially_crop_block(
+    data: xr.Dataset, mask: xr.DataArray
+) -> xr.Dataset:
+    """Crop to a mask's envelope and mask only spatial data variables."""
+    y_indices = np.flatnonzero(mask.any(dim="x").values)
+    x_indices = np.flatnonzero(mask.any(dim="y").values)
+    if not len(y_indices) or not len(x_indices):
+        raise ValueError("Cannot create a block from an empty mask")
+
+    y_slice = slice(y_indices[0], y_indices[-1] + 1)
+    x_slice = slice(x_indices[0], x_indices[-1] + 1)
+    block = data.isel(y=y_slice, x=x_slice).copy()
+    block_mask = mask.isel(y=y_slice, x=x_slice)
+
+    for variable_name, variable in block.data_vars.items():
+        if {"y", "x"}.issubset(variable.dims):
+            block[variable_name] = variable.where(block_mask)
+
+    return block
+
+
+def _write_netcdf_atomically(block: xr.Dataset, output_path: Path) -> None:
+    """Write a complete NetCDF file before exposing its final filename."""
+    temporary_path = output_path.with_name(output_path.name + ".partial")
+    try:
+        block.to_netcdf(temporary_path)
+        temporary_path.replace(output_path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def _append_metadata_atomically(metadata_path: Path, records: list) -> None:
+    """Atomically append records without risking a partial metadata update."""
+    metadata_path = Path(metadata_path)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=metadata_path.parent,
+        prefix=f".{metadata_path.name}.",
+        suffix=".partial",
+    )
+    os.close(descriptor)
+    temporary_path = Path(temporary_name)
+
+    try:
+        if metadata_path.exists():
+            shutil.copyfile(metadata_path, temporary_path)
+        write_metadata(temporary_path, records)
+        temporary_path.replace(metadata_path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
 
 def make_data_blocks(records, out_dir, metadata_path):
-
     block_metadata = []
+    created_paths = []
 
-    # For each standardized file
-    for record in records:
+    try:
+        # For each standardized file
+        for record in records:
+            file_path = record["file_path"]
 
-        file_path = record["file_path"]
+            # All blocks retain the standardized dataset metadata. Rename its
+            # dataset-wide coordinates to distinguish them from block bounds.
+            base_record = {**record}
+            base_record.pop("file_path")
+            if "coordinates" in base_record:
+                base_record["dataset_bounds"] = base_record.pop("coordinates")
 
-        # Save block information
-        # all blocks from a record should have the same repo,dataset,var,sp.res,t.res
-        # NOTE: Assume the time interval and additional params are the same for all blocks for now
-        base_record = {
-            **record
-        }
-        base_record.pop("file_path")
+            with xr.open_dataset(file_path) as data:
+                bucket_codes_mask = map_buckets(data)
 
-        with xr.open_dataset(file_path) as data:
+                for raw_bucket_code in np.unique(bucket_codes_mask.values):
+                    bucket_code = int(raw_bucket_code)
+                    bucket_id = bucket_id_from_code(bucket_code)
+                    mask = bucket_codes_mask == bucket_code
 
-            # Get a mask assigning a bucket code to each data cell
-            bucket_codes_mask = map_buckets(data)
+                    block_bounds = bounding_rectangle(data, mask)
+                    block = spatially_crop_block(data, mask)
 
-            # Filter data cells by each bucket
-            for bucket_code in np.unique(bucket_codes_mask):
-                mask = bucket_codes_mask == bucket_code
-                block = data.where(mask, drop=True)
-
-                # Find MBR of block (could be bucket or subset of bucket)
-                bounds = bounding_rectangle(block)
-
-                # Assert bucket directory exists (should be storage/data/{bucket_id}
-                bucket_id = calc_bucket_id(bucket_code)
-                path = Path(out_dir, bucket_code)
-                path.parent.mkdir(parents=True, exist_ok=True)
-
-                # Save resulting data block
-                output_path = unique_output_path(
-                    directory= path,
-                    unique_type="random",
+                    bucket_directory = Path(out_dir, bucket_id)
+                    output_path = unique_output_path(
+                        directory=bucket_directory,
+                        unique_type="random",
                     )
-                block.to_netcdf(output_path)
+                    _write_netcdf_atomically(block, output_path)
+                    created_paths.append(output_path)
 
-                # Make block-specific record
-                block_record = make_block_record(
-                    record=base_record,
-                    bucket=bucket_code,
-                    bounds=bounds,
-                    path=output_path,
+                    block_metadata.append(
+                        make_block_record(
+                            record=base_record,
+                            bucket_code=bucket_code,
+                            bucket_id=bucket_id,
+                            block_bounds=block_bounds,
+                            path=output_path,
+                        )
                     )
-                
-                block_metadata.append(block_record)
 
-    write_metadata(metadata_path, block_metadata)
+        _append_metadata_atomically(metadata_path, block_metadata)
+    except BaseException:
+        for created_path in created_paths:
+            created_path.unlink(missing_ok=True)
+        raise
 
 if __name__ == "__main__":
 

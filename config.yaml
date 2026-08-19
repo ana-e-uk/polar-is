@@ -13,6 +13,13 @@ standardized_data: storage/data/tmp/standardized/standardized_metadata.jsonl
 metadata: storage/data/metadata.jsonl
 buckets: storage/data/buckets.json
 
+# canonical space bucket grid
+bucket_grid:
+  lon_min: 0
+  lat_min: -90
+  lon_size: 60
+  lat_size: 30
+
 # dictionaries
 name_docs: {
   "copernicusclimatedatastore": {
