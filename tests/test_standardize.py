@@ -96,7 +96,7 @@ def main() -> None:
     assert metadata_output.parent.resolve() == output_dir.resolve()
     assert metadata_output.name == "standardized_metadata.jsonl"
 
-    temporary_parent = settings._data / "tmp"
+    temporary_parent = settings._standardized.parent
     temporary_parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(
         prefix="standardize-test-input-", dir=temporary_parent

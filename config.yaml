@@ -1,6 +1,6 @@
 ########### directories ###########
 initialize_dir: storage/initialize/
-data_dir: storage/data/
+data_dir: storage/data/buckets/
 downloaded_data_dir: storage/data/tmp/downloaded/
 standardized_data_dir: storage/data/tmp/standardized/
 
