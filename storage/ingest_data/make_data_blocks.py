@@ -295,9 +295,7 @@ def make_data_blocks(
             created_path.unlink(missing_ok=True)
         raise
 
-    # Counts are derived and non-authoritative. Refresh them only after block
-    # files and metadata have committed. If this update fails, valid blocks and
-    # metadata remain in place and the counts can be recomputed later.
+    # Counts are derived after block files and metadata are committed.
     try:
         update_bucket_file_counts(out_dir, buckets_path)
     except Exception as error:
