@@ -61,5 +61,47 @@ Indexing function `index_data()` is in **ingest_data.py**.
 ## Store data
 Store data by bucket.
 
-## Aggregate data
-Aggregate each block in a bucket. The buckets at coarser levels may be different than buckets at finer resolution levels.
+## Aggregate data and buckets
+<!-- Aggregate each block in a bucket. The buckets at coarser levels may be different than buckets at finer resolution levels. -->
+We want to have a spatio-temporal hierarchy of pre-aggregated values so we can answer questions faster. Because we want to keep datasets in their native resolutions, we will aggregate, coarsen, the data spatially by a factor of 2 and a factor of 4 (keeping each dataset in its projection), and coarsen the data to any higher temporal resolution out of {Hour, Day, Month, Year}. 
+
+The coarser spatial resolutions will be stored in coarser buckets.
+
+Buckets are doubled in size each coarse factor. For example:
+
+```python
+Starting with bucket row 0 column 0 (r,c):
+        Group (r,c) with (r+1, c), (r,c+1), (r+1, c+1)
+        If r+1 or c+1 does not exist, just group the buckets that do exist
+```
+
+In order to create accurate coarser groups within the coarser buckets, we coarsen the native data to the desired resolution before splitting them into buckets. This also lets us treat the aggregated data as we do any other dataset and use the same code.
+
+```
+        Native resolution groups: ERA5  - (Fine, H)       - Fine=0.25, 0.5
+                                  CARRA - (Fine, 3H(?))   - Fine=2.5km^2
+                                  WHOI  - (Fine, 3H)      - Fine=0.25
+                                  EMSST - (Fine, D)       - Fine=0.25
+
+        (Resulting groups) - datasets with blocks in group
+                          (Fine, H) - ERA5  
+                          (Fine, 3H)- ERA5  CARRA(?)    WHOI
+                          (Fine, D) - ERA5  CARRA       WHOI    EMSST
+                          (Fine, M) - ERA5  CARRA       WHOI    EMSST
+                          (Fine, Y) - ERA5  CARRA       WHOI    EMSST
+
+
+
+        Resulting groups: (Coarse1, H) - ERA5   
+                          (Coarse1, 3H)- ERA5   CARRA(?)    WHOI
+                          (Coarse1, D) - ERA5   CARRA       WHOI    EMSST
+                          (Coarse1, M) - ERA5   CARRA       WHOI    EMSST
+                          (Coarse1, Y) - ERA5   CARRA       WHOI    EMSST
+
+                          (Coarse2, H) - ERA5   
+                          (Coarse2, 3H)- ERA5   CARRA(?)    WHOI
+                          (Coarse2, D) - ERA5   CARRA       WHOI    EMSST
+                          (Coarse2, M) - ERA5   CARRA       WHOI    EMSST
+                          (Coarse2, Y) - ERA5   CARRA       WHOI    EMSST
+
+```

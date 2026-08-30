@@ -1,13 +1,12 @@
-"""Aggregate the data blocks to coarser spatial and temporal resolutions.
+"""Aggregate the data blocks to coarser spatial and temporal resolutions to get spatio-temporal hierarchy:
 
-For every bucket that has one or more (new) blocks,
-    Coarsen blocks to the following temporal resolutions: {Hour, Day, Month, Year}
-    Store these coarser blocks
-    Coarsen blocks spatially by a factor of 2 and a factor of 4
-    Store these coarser blocks
+(Fine, Coarse) x (unique dataset temporal resolutions)
 
-For every new temporally coarser block
-    Coarsen blocks spatially by a factor of 2 and a factor of 4
+1. Coarsen native data by time to make all the "Fine" groups
+2. Split Fine group data into blocks using original buckets
+
+3. Coarsen Fine groups by space to get "Coarse" groups
+4. Split Coarse group data into blocks using large buckets
 
 """
 from polaris.config import get_settings

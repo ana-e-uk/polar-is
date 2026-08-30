@@ -289,7 +289,7 @@ def make_data_blocks(
                         )
                     )
 
-        _append_metadata_atomically(metadata_path, block_metadata)
+        _append_metadata_atomically(metadata_path, block_metadata)  # NOTE: check if this needs to be within a loop
     except BaseException:
         for created_path in created_paths:
             created_path.unlink(missing_ok=True)

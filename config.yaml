@@ -88,3 +88,8 @@ name_docs: {
     }
   }
 }
+
+aggregation_methods:
+  sea_surface_temperature: mean
+  surface_temperature: mean
+  precipitation: sum
