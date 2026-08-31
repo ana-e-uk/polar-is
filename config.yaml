@@ -12,6 +12,8 @@ downloaded_data: storage/data/tmp/downloaded/downloaded_data.jsonl
 standardized_data: storage/data/tmp/standardized/standardized_metadata.jsonl
 metadata: storage/data/metadata.jsonl
 buckets: storage/data/buckets.json
+basins: storage/data/basins.json
+barrels: storage/data/barrels.json
 
 ############ test ###########
 # data_dir: storage/data/tmp/carra-block-test/
@@ -90,6 +92,9 @@ name_docs: {
 }
 
 aggregation_methods:
-  sea_surface_temperature: mean
-  surface_temperature: mean
-  precipitation: sum
+  sea_surface_temperature:
+    temporal: mean
+    spatial: mean
+  precipitation:
+    temporal: sum
+    spatial: mean

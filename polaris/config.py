@@ -20,10 +20,13 @@ class Settings:
     standardized_data_: Path
     metadata_: Path
     buckets_: Path
+    basins_: Path
+    barrels_: Path
     # canonical bucket grid
     bucket_grid: dict
     # dictionaries
     name_docs: dict
+    aggregation_methods: dict
 
 @lru_cache
 def get_settings() -> Settings:
@@ -41,6 +44,9 @@ def get_settings() -> Settings:
         standardized_data_=PROJECT_ROOT / raw["standardized_data"],
         metadata_=PROJECT_ROOT / raw["metadata"],
         buckets_=PROJECT_ROOT / raw["buckets"],
+        basins_=PROJECT_ROOT / raw["basins"],
+        barrels_=PROJECT_ROOT / raw["barrels"],
         bucket_grid=raw["bucket_grid"],
         name_docs=raw.get("name_docs", {}),
+        aggregation_methods=raw["aggregation_methods"],
     )

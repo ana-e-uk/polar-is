@@ -65,9 +65,9 @@ Store data by bucket.
 <!-- Aggregate each block in a bucket. The buckets at coarser levels may be different than buckets at finer resolution levels. -->
 We want to have a spatio-temporal hierarchy of pre-aggregated values so we can answer questions faster. Because we want to keep datasets in their native resolutions, we will aggregate, coarsen, the data spatially by a factor of 2 and a factor of 4 (keeping each dataset in its projection), and coarsen the data to any higher temporal resolution out of {Hour, Day, Month, Year}. 
 
-The coarser spatial resolutions will be stored in coarser buckets.
+The coarser spatial resolutions will be stored in coarser buckets called **basins** (2x size of buckets) and **barrels** (4x size of buckets).
 
-Buckets are doubled in size each coarse factor. For example:
+Buckets are doubled in size for each coarse factor as follows:
 
 ```python
 Starting with bucket row 0 column 0 (r,c):
@@ -75,7 +75,7 @@ Starting with bucket row 0 column 0 (r,c):
         If r+1 or c+1 does not exist, just group the buckets that do exist
 ```
 
-In order to create accurate coarser groups within the coarser buckets, we coarsen the native data to the desired resolution before splitting them into buckets. This also lets us treat the aggregated data as we do any other dataset and use the same code.
+In order to create accurate coarser groups within the coarser buckets, we coarsen the native data to the desired resolution *before* splitting them into buckets. This also lets us treat the aggregated data as we do any other dataset and use the same code.
 
 ```
         Native resolution groups: ERA5  - (Fine, H)       - Fine=0.25, 0.5
