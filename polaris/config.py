@@ -6,11 +6,20 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_FILE = PROJECT_ROOT / "config.yaml"
 
+
+@dataclass(frozen=True)
+class ContainerScheme:
+    name: str
+    factor: int
+    data_dir: Path
+    metadata: Path
+    definitions: Path
+
+
 @dataclass(frozen=True)
 class Settings:
     # directories
     _initialize: Path
-    _data: Path
     _downloaded: Path
     _standardized: Path
     # files
@@ -18,12 +27,10 @@ class Settings:
     requests_: Path
     downloaded_data_: Path
     standardized_data_: Path
-    metadata_: Path
-    buckets_: Path
-    basins_: Path
-    barrels_: Path
-    # canonical bucket grid
-    bucket_grid: dict
+    # spatial container hierarchy
+    container_grid: dict
+    container_schemes: dict[str, ContainerScheme]
+    temporal_aggregation_resolutions: tuple[str, ...]
     # dictionaries
     name_docs: dict
     aggregation_methods: dict
@@ -33,20 +40,30 @@ def get_settings() -> Settings:
     with CONFIG_FILE.open() as file:
         raw = yaml.safe_load(file)
 
+    schemes = {
+        name: ContainerScheme(
+            name=name,
+            factor=int(values["factor"]),
+            data_dir=PROJECT_ROOT / values["data_dir"],
+            metadata=PROJECT_ROOT / values["metadata"],
+            definitions=PROJECT_ROOT / values["definitions"],
+        )
+        for name, values in raw["container_schemes"].items()
+    }
+
     return Settings(
         _initialize=PROJECT_ROOT / raw["initialize_dir"],
-        _data=PROJECT_ROOT / raw["data_dir"],
         _downloaded=PROJECT_ROOT / raw["downloaded_data_dir"],
         _standardized=PROJECT_ROOT / raw["standardized_data_dir"],
         interests_=PROJECT_ROOT / raw["interests"],
         requests_=PROJECT_ROOT / raw["requests"],
         downloaded_data_=PROJECT_ROOT / raw["downloaded_data"],
         standardized_data_=PROJECT_ROOT / raw["standardized_data"],
-        metadata_=PROJECT_ROOT / raw["metadata"],
-        buckets_=PROJECT_ROOT / raw["buckets"],
-        basins_=PROJECT_ROOT / raw["basins"],
-        barrels_=PROJECT_ROOT / raw["barrels"],
-        bucket_grid=raw["bucket_grid"],
+        container_grid=raw["container_grid"],
+        container_schemes=schemes,
+        temporal_aggregation_resolutions=tuple(
+            raw["temporal_aggregation_resolutions"]
+        ),
         name_docs=raw.get("name_docs", {}),
         aggregation_methods=raw["aggregation_methods"],
     )

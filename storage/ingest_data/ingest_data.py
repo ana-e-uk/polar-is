@@ -1,5 +1,6 @@
 from storage.ingest_data.standardize import standardize
 from storage.ingest_data.make_data_blocks import make_data_blocks
+from storage.ingest_data.aggregate_data import aggregate_standardized_metadata
 
 from polaris.config import get_settings
 
@@ -12,6 +13,6 @@ def ingest_data():
     
     # Standardize data
 
-    # Split standardized datasets into blocks and store by bucket
+    # Produce all temporal/spatial products and split them through write_blocks
 
-    # Aggregate buckets
+    # aggregate_standardized_metadata()

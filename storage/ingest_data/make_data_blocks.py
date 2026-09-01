@@ -1,50 +1,34 @@
-"""Split standardized data into blocks.
+"""Split one native-grid dataset product into spatial-container blocks."""
 
-Each cell in a dataset grid will be classified into a bucket
-based on the bucket the cell center falls into. All the cells
-corresponding to one bucket will be stored together in one
-file. This group of cells is called a block. A dataset may
-have multiple blocks. 
-"""
+from __future__ import annotations
+
+import hashlib
 import json
+from numbers import Real
 import os
 from pathlib import Path
 import shutil
 import tempfile
-from numbers import Real
 
 import numpy as np
 import xarray as xr
 
-from storage.manage.space_buckets import (
-    bucket_id_from_code,
-    map_buckets,
-    normalize_lon_to_bucket_grid,
+from polaris.config import ContainerScheme, get_settings
+from storage.ingest_data.standardize import read_metadata, write_metadata
+from storage.manage.space_containers import (
+    ContainerGrid,
+    container_id_from_code,
+    ensure_container_scheme,
+    map_containers,
+    normalize_longitude,
 )
-from storage.ingest_data.standardize import (
-    read_metadata,
-    unique_output_path,
-    write_metadata,
-)
-
-from polaris.config import get_settings
 
 
-def make_block_record(
-    record, bucket_code: int, bucket_id: str, block_summary: dict, path: Path
-):
-    """Add block-specific spatial and storage fields to a record."""
-    return {
-        **record,
-        "bucket_code": bucket_code,
-        "bucket_id": bucket_id,
-        "block_summary": block_summary,
-        "file_path": str(path),
-    }
+METADATA_SCHEMA_VERSION = 2
+AGGREGATION_VERSION = 1
 
 
 def _finite_scalar_or_none(value):
-    """Convert an Xarray scalar to a JSON-safe Python scalar."""
     scalar = value.compute().item()
     if isinstance(scalar, Real) and not np.isfinite(scalar):
         return None
@@ -52,69 +36,30 @@ def _finite_scalar_or_none(value):
 
 
 def block_bounds_and_extrema(
-    data: xr.Dataset, mask: xr.DataArray, variable: str
+    data: xr.Dataset,
+    mask: xr.DataArray,
+    variable: str,
+    grid: ContainerGrid,
 ) -> dict:
-    """Return the loose lon/lat envelope of the selected cell centers
-    and the variable maxima.
-    """
-    latitude, longitude = xr.broadcast(
-        data["latitude"], data["longitude"],
-    )
+    """Return a loose cell-center envelope and scientific-variable extrema."""
+    latitude, longitude = xr.broadcast(data["latitude"], data["longitude"])
     latitude = latitude.transpose("y", "x")
-    longitude = normalize_lon_to_bucket_grid(
-        longitude.transpose("y", "x")
-    )
-
+    longitude = normalize_longitude(longitude.transpose("y", "x"), grid)
     selected_latitude = latitude.where(mask)
     selected_longitude = longitude.where(mask)
     selected_values = data[variable].where(mask)
-
-    bounds = {
+    return {
         "lat_min": selected_latitude.min().compute().item(),
         "lat_max": selected_latitude.max().compute().item(),
         "lon_min": selected_longitude.min().compute().item(),
         "lon_max": selected_longitude.max().compute().item(),
-        "var_min": _finite_scalar_or_none(
-            selected_values.min(skipna=True)
-        ),
-        "var_max": _finite_scalar_or_none(
-            selected_values.max(skipna=True)
-        ),
+        "var_min": _finite_scalar_or_none(selected_values.min(skipna=True)),
+        "var_max": _finite_scalar_or_none(selected_values.max(skipna=True)),
     }
 
-    return bounds
 
-
-def spatially_crop_block(
-    data: xr.Dataset, mask: xr.DataArray
-) -> xr.Dataset:
-    """Crop to a mask's envelope and mask only spatial data variables."""
-    y_indices = np.flatnonzero(mask.any(dim="x").values)
-    x_indices = np.flatnonzero(mask.any(dim="y").values)
-    if not len(y_indices) or not len(x_indices):
-        raise ValueError("Cannot create a block from an empty mask")
-
-    y_slice = slice(y_indices[0], y_indices[-1] + 1)
-    x_slice = slice(x_indices[0], x_indices[-1] + 1)
-    block = data.isel(y=y_slice, x=x_slice).copy()
-    block_mask = mask.isel(y=y_slice, x=x_slice)
-
-    for variable_name, variable in block.data_vars.items():
-        if {"y", "x"}.issubset(variable.dims):
-            block[variable_name] = variable.where(block_mask)
-
-        _preserve_compression(
-            source=data[variable_name],
-            target=block[variable_name],
-        )
-
-    return block
-
-
-def _preserve_compression(
-    source: xr.DataArray, target: xr.DataArray
-) -> None:
-    """Copy compatible NetCDF compression settings to a cropped variable."""
+def _preserve_compression(source: xr.DataArray, target: xr.DataArray) -> None:
+    """Copy compatible NetCDF compression settings to an output variable."""
     for key in (
         "zlib",
         "complevel",
@@ -124,25 +69,38 @@ def _preserve_compression(
         "contiguous",
     ):
         target.encoding.pop(key, None)
-
     if not source.encoding.get("zlib", False):
         return
-
     target.encoding["zlib"] = True
     for key in ("complevel", "shuffle", "fletcher32"):
         if key in source.encoding:
             target.encoding[key] = source.encoding[key]
-
-    source_chunks = source.encoding.get("chunksizes")
-    if source_chunks is not None and len(source_chunks) == target.ndim:
+    chunks = source.encoding.get("chunksizes")
+    if chunks is not None and len(chunks) == target.ndim:
         target.encoding["chunksizes"] = tuple(
-            min(int(chunk_size), target.sizes[dimension])
-            for chunk_size, dimension in zip(source_chunks, target.dims)
+            min(int(chunk), target.sizes[dimension])
+            for chunk, dimension in zip(chunks, target.dims)
         )
 
 
+def spatially_crop_block(data: xr.Dataset, mask: xr.DataArray) -> xr.Dataset:
+    """Crop to a mask envelope and mask variables containing both y and x."""
+    y_indices = np.flatnonzero(mask.any(dim="x").values)
+    x_indices = np.flatnonzero(mask.any(dim="y").values)
+    if not len(y_indices) or not len(x_indices):
+        raise ValueError("Cannot create a block from an empty mask")
+    y_slice = slice(y_indices[0], y_indices[-1] + 1)
+    x_slice = slice(x_indices[0], x_indices[-1] + 1)
+    block = data.isel(y=y_slice, x=x_slice).copy()
+    block_mask = mask.isel(y=y_slice, x=x_slice)
+    for name, variable in block.data_vars.items():
+        if {"y", "x"}.issubset(variable.dims):
+            block[name] = variable.where(block_mask)
+        _preserve_compression(data[name], block[name])
+    return block
+
+
 def _write_netcdf_atomically(block: xr.Dataset, output_path: Path) -> None:
-    """Write a complete NetCDF file before exposing its final filename."""
     temporary_path = output_path.with_name(output_path.name + ".partial")
     try:
         block.to_netcdf(temporary_path)
@@ -152,9 +110,9 @@ def _write_netcdf_atomically(block: xr.Dataset, output_path: Path) -> None:
         raise
 
 
-def _append_metadata_atomically(metadata_path: Path, records: list) -> None:
-    """Atomically append records without risking a partial metadata update."""
-    metadata_path = Path(metadata_path)
+def _append_metadata_atomically(metadata_path: Path, records: list[dict]) -> None:
+    if not records:
+        return
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         dir=metadata_path.parent,
@@ -163,7 +121,6 @@ def _append_metadata_atomically(metadata_path: Path, records: list) -> None:
     )
     os.close(descriptor)
     temporary_path = Path(temporary_name)
-
     try:
         if metadata_path.exists():
             shutil.copyfile(metadata_path, temporary_path)
@@ -174,144 +131,221 @@ def _append_metadata_atomically(metadata_path: Path, records: list) -> None:
         raise
 
 
-def _read_bucket_definitions(buckets_path: Path) -> dict:
-    """Read and minimally validate the canonical bucket definitions."""
-    buckets_path = Path(buckets_path)
-    with buckets_path.open(encoding="utf-8") as file:
-        buckets = json.load(file)
-
-    if not isinstance(buckets, dict) or not buckets:
-        raise ValueError(f"Invalid or empty bucket definitions: {buckets_path}")
-    return buckets
+def read_container_definitions(path: Path) -> dict[str, dict]:
+    with Path(path).open(encoding="utf-8") as file:
+        definitions = json.load(file)
+    if not isinstance(definitions, dict) or not definitions:
+        raise ValueError(f"Invalid or empty container definitions: {path}")
+    return definitions
 
 
-def update_bucket_file_counts(out_dir, buckets_path) -> None:
-    """Atomically refresh each bucket's derived NetCDF file count."""
-    out_dir = Path(out_dir)
-    buckets_path = Path(buckets_path)
-    buckets = _read_bucket_definitions(buckets_path)
-
-    for bucket_id, bucket in buckets.items():
-        if not isinstance(bucket, dict):
-            raise ValueError(f"Invalid definition for bucket {bucket_id!r}")
-
-        bucket_directory = out_dir / bucket_id
-        bucket["data"] = (
-            sum(
-                path.is_file()
-                for path in bucket_directory.glob("*.nc")
-            )
-            if bucket_directory.is_dir()
+def update_container_file_counts(scheme: ContainerScheme) -> None:
+    """Atomically refresh direct NetCDF counts for one capacity."""
+    definitions = read_container_definitions(scheme.definitions)
+    for container_id, definition in definitions.items():
+        if not isinstance(definition, dict):
+            raise ValueError(f"Invalid definition for {container_id!r}")
+        directory = scheme.data_dir / container_id
+        definition["data"] = (
+            sum(path.is_file() for path in directory.glob("*.nc"))
+            if directory.is_dir()
             else 0
         )
-
-    buckets_path.parent.mkdir(parents=True, exist_ok=True)
+    scheme.definitions.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
-        dir=buckets_path.parent,
-        prefix=f".{buckets_path.name}.",
+        dir=scheme.definitions.parent,
+        prefix=f".{scheme.definitions.name}.",
         suffix=".partial",
     )
     os.close(descriptor)
     temporary_path = Path(temporary_name)
-
     try:
         with temporary_path.open("w", encoding="utf-8") as file:
-            json.dump(buckets, file, indent=2)
+            json.dump(definitions, file, indent=2)
             file.write("\n")
             file.flush()
             os.fsync(file.fileno())
-        temporary_path.replace(buckets_path)
+        temporary_path.replace(scheme.definitions)
     except BaseException:
         temporary_path.unlink(missing_ok=True)
         raise
 
 
-def make_data_blocks(
-    records,
-    out_dir,
-    metadata_path,
-    buckets_path=None,
-):
-    if buckets_path is None:
-        buckets_path = get_settings().buckets_
-    buckets_path = Path(buckets_path)
-    available_bucket_ids = set(_read_bucket_definitions(buckets_path))
+def _json_identity(value: dict) -> str:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
-    block_metadata = []
-    created_paths = []
 
+def _base_block_record(record: dict, product: dict) -> dict:
+    source_path = record.get("file_path")
+    base = {**record}
+    base.pop("file_path", None)
+    if "coordinates" in base:
+        base["dataset_bounds"] = base.pop("coordinates")
+    source_paths = product.get("source_file_paths")
+    if source_paths is None:
+        source_paths = [source_path] if source_path is not None else []
+    return {
+        **base,
+        **product,
+        "metadata_schema_version": METADATA_SCHEMA_VERSION,
+        "aggregation_version": AGGREGATION_VERSION,
+        "source_file_paths": [str(path) for path in source_paths],
+    }
+
+
+def _block_record(
+    base_record: dict,
+    scheme: ContainerScheme,
+    container_code: int,
+    container_id: str,
+    block_summary: dict,
+    path: Path,
+) -> dict:
+    identity = {
+        **base_record,
+        "container": scheme.name,
+        "container_code": container_code,
+        "container_id": container_id,
+    }
+    return {
+        **identity,
+        "product_id": _json_identity(identity),
+        "block_summary": block_summary,
+        "file_path": str(path),
+    }
+
+
+def _default_product_metadata(record: dict, data: xr.Dataset) -> dict:
+    from storage.ingest_data.aggregate_data import (
+        infer_native_temporal_resolution,
+    )
+
+    temporal_resolution = infer_native_temporal_resolution(
+        data["timestamp"], record.get("temporal_resolution")
+    )
+    spatial_resolution = record.get("spatial_resolution")
+    timestamps = data.get("timestamp")
+    time_start = str(timestamps.values[0]) if timestamps is not None else None
+    time_end = str(timestamps.values[-1]) if timestamps is not None else None
+    return {
+        "product_type": "native",
+        "native_temporal_resolution": temporal_resolution,
+        "temporal_resolution": temporal_resolution,
+        "native_spatial_resolution": spatial_resolution,
+        "spatial_resolution": spatial_resolution,
+        "spatial_coarsening_factor": 1,
+        "temporal_aggregation_method": None,
+        "spatial_aggregation_method": None,
+        "aggregation_order": "temporal_then_spatial",
+        "time_start": time_start,
+        "time_end": time_end,
+    }
+
+
+def write_blocks(
+    data: xr.Dataset,
+    record: dict,
+    scheme: ContainerScheme,
+    *,
+    grid: ContainerGrid | None = None,
+    product_metadata: dict | None = None,
+) -> list[dict]:
+    """Write one dataset product through the common container-block path."""
+    grid = grid or ensure_container_scheme(scheme)
+    definitions = read_container_definitions(scheme.definitions)
+    available_ids = set(definitions)
+    variable = record["variable"]
+    if variable not in data.data_vars:
+        raise ValueError(f"Scientific variable {variable!r} is missing")
+    product = product_metadata or _default_product_metadata(record, data)
+    base_record = _base_block_record(record, product)
+    codes = map_containers(data, grid)
+    existing_records = (
+        read_metadata(scheme.metadata) if scheme.metadata.exists() else []
+    )
+    existing_by_id = {
+        item["product_id"]: item
+        for item in existing_records
+        if "product_id" in item
+    }
+    created_paths: list[Path] = []
+    new_records: list[dict] = []
     try:
-        # For each standardized file
-        for record in records:
-            file_path = record["file_path"]
-
-            # All blocks retain the standardized dataset metadata
-            base_record = {**record}
-            base_record.pop("file_path")
-            if "coordinates" in base_record:
-                base_record["dataset_bounds"] = base_record.pop("coordinates")
-            record_variable = record["variable"]
-
-            with xr.open_dataset(file_path) as data:
-                bucket_codes_mask = map_buckets(data)
-
-                for raw_bucket_code in np.unique(bucket_codes_mask.values):
-                    bucket_code = int(raw_bucket_code)
-                    bucket_id = bucket_id_from_code(bucket_code)
-                    if bucket_id not in available_bucket_ids:
-                        raise ValueError(
-                            f"Bucket {bucket_id!r} is missing from {buckets_path}"
-                        )
-                    mask = bucket_codes_mask == bucket_code
-
-                    block_summary = block_bounds_and_extrema(
-                        data=data,
-                        mask=mask,
-                        variable=record_variable,
+        for raw_code in np.unique(codes.values):
+            code = int(raw_code)
+            container_id = container_id_from_code(code, grid)
+            if container_id not in available_ids:
+                raise ValueError(
+                    f"Container {container_id!r} is missing from "
+                    f"{scheme.definitions}"
+                )
+            mask = codes == code
+            summary = block_bounds_and_extrema(data, mask, variable, grid)
+            provisional = _block_record(
+                base_record,
+                scheme,
+                code,
+                container_id,
+                summary,
+                Path("pending"),
+            )
+            product_id = provisional["product_id"]
+            if product_id in existing_by_id:
+                existing_path = Path(existing_by_id[product_id]["file_path"])
+                if not existing_path.is_file():
+                    raise FileNotFoundError(
+                        f"Metadata for {product_id} points to missing "
+                        f"block {existing_path}"
                     )
-                    block = spatially_crop_block(data, mask)
-
-                    bucket_directory = Path(out_dir, bucket_id)
-                    output_path = unique_output_path(
-                        directory=bucket_directory,
-                        unique_type="random",
-                    )
-                    _write_netcdf_atomically(block, output_path)
-                    created_paths.append(output_path)
-
-                    block_metadata.append(
-                        make_block_record(
-                            record=base_record,
-                            bucket_code=bucket_code,
-                            bucket_id=bucket_id,
-                            block_summary=block_summary,
-                            path=output_path,
-                        )
-                    )
-
-        _append_metadata_atomically(metadata_path, block_metadata)  # NOTE: check if this needs to be within a loop
+                continue
+            directory = scheme.data_dir / container_id
+            directory.mkdir(parents=True, exist_ok=True)
+            output_path = directory / f"{product_id}.nc"
+            if output_path.exists():
+                raise FileExistsError(
+                    f"Orphan block exists without metadata: {output_path}"
+                )
+            block = spatially_crop_block(data, mask)
+            _write_netcdf_atomically(block, output_path)
+            created_paths.append(output_path)
+            provisional["file_path"] = str(output_path)
+            new_records.append(provisional)
+        _append_metadata_atomically(scheme.metadata, new_records)
     except BaseException:
-        for created_path in created_paths:
-            created_path.unlink(missing_ok=True)
+        for path in created_paths:
+            path.unlink(missing_ok=True)
         raise
-
-    # Counts are derived after block files and metadata are committed.
     try:
-        update_bucket_file_counts(out_dir, buckets_path)
+        update_container_file_counts(scheme)
     except Exception as error:
         raise RuntimeError(
-            "Block files and metadata committed successfully, but bucket file "
-            "counts could not be refreshed. Do not rerun ingestion; call "
-            "update_bucket_file_counts() after resolving the count error."
+            "Block files and metadata committed, but container counts could "
+            "not be refreshed. Repair counts rather than rerunning ingestion."
         ) from error
+    return new_records
+
+
+def make_data_blocks(
+    records: list[dict],
+    scheme: ContainerScheme | None = None,
+) -> list[dict]:
+    """Write native-resolution capacity-1 blocks for standardized records."""
+    if scheme is None:
+        scheme = get_settings().container_schemes["capacity_1"]
+    grid = ensure_container_scheme(scheme)
+    results = []
+    for record in records:
+        with xr.open_dataset(record["file_path"]) as data:
+            results.extend(write_blocks(data, record, scheme, grid=grid))
+    return results
+
 
 if __name__ == "__main__":
-
     settings = get_settings()
-    metadata = settings.standardized_data_
-    records = read_metadata(metadata)
-
-    data_dir = settings._data
-    metadata_path = settings.metadata_
-
-    make_data_blocks(records, data_dir, metadata_path)
+    make_data_blocks(read_metadata(settings.standardized_data_))

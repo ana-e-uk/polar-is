@@ -1,6 +1,5 @@
 ########### directories ###########
 initialize_dir: storage/initialize/
-data_dir: storage/data/buckets/
 downloaded_data_dir: storage/data/tmp/downloaded/
 standardized_data_dir: storage/data/tmp/standardized/
 
@@ -10,23 +9,32 @@ interests: storage/data/tmp/interests.csv
 requests: storage/data/tmp/requests.csv
 downloaded_data: storage/data/tmp/downloaded/downloaded_data.jsonl
 standardized_data: storage/data/tmp/standardized/standardized_metadata.jsonl
-metadata: storage/data/metadata.jsonl
-buckets: storage/data/buckets.json
-basins: storage/data/basins.json
-barrels: storage/data/barrels.json
 
-############ test ###########
-# data_dir: storage/data/tmp/carra-block-test/
-# standardized_data: storage/data/tmp/standardized/carra_standardized_metadata.jsonl
-# metadata: storage/data/tmp/carra-block-test/metadata.jsonl
-# downloaded_data: storage/data/tmp/downloaded/carra_downloaded_data.jsonl
-
-############ canonical space bucket grid ###########
-bucket_grid:
+############ canonical spatial container grid ###########
+container_grid:
   lon_min: 0
   lat_min: -90
   lon_size: 60
   lat_size: 30
+
+container_schemes:
+  capacity_1:
+    factor: 1
+    data_dir: storage/data/containers/capacity_1
+    metadata: storage/data/containers/capacity_1/metadata.jsonl
+    definitions: storage/data/container_definitions/capacity_1.json
+  capacity_2:
+    factor: 2
+    data_dir: storage/data/containers/capacity_2
+    metadata: storage/data/containers/capacity_2/metadata.jsonl
+    definitions: storage/data/container_definitions/capacity_2.json
+  capacity_4:
+    factor: 4
+    data_dir: storage/data/containers/capacity_4
+    metadata: storage/data/containers/capacity_4/metadata.jsonl
+    definitions: storage/data/container_definitions/capacity_4.json
+
+temporal_aggregation_resolutions: [1H, 3H, 1D, 1MS, 1YS]
 
 ############ dictionaries ###########
 name_docs: {
