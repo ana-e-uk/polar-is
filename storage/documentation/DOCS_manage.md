@@ -80,7 +80,7 @@ dataset fields plus:
 Container codes and IDs are local to a capacity. The composite
 `(container, container_code)` is the globally meaningful identity.
 
-## Full list of block metadata columns
+### Full list of block metadata columns
 * repository - `str` - remote repository the data is from
 * dataset - `str` - dataset the data is from
 * variable - `str` 
@@ -112,3 +112,49 @@ Container codes and IDs are local to a capacity. The composite
 * time_start - `str`
 * time_end - `str`
 * product_id - `str` - long identification number to avoid generating the same blocks
+
+### Example row of metadata
+```yaml
+{
+    "repository": "copernicusclimatedatastore", 
+    "dataset": "carra_height", 
+    "variable": "sea_surface_temperature", 
+    "spatial_resolution": 2.5, 
+    "temporal_resolution": "3H", 
+    "start_year": "2018", 
+    "start_month": "01", 
+    "end_year": "2018", 
+    "end_month": "01", 
+    "region": "east", 
+    "additional_params": {
+        "region": "east", 
+        "height": "15m"
+        }, 
+    "grid_type": "curvilinear", 
+    "dataset_bounds": null, 
+    "block_summary": {
+        "lat_min": 60.55910256508847, 
+        "lat_max": 85.12861433663666, 
+        "lon_min": 1.380858407173946e-05, 
+        "lon_max": 59.999936274388745, 
+        "var_min": 271.3599853515625, 
+        "var_max": 281.729248046875
+        }, 
+    "file_path": "/Users/bean/polar-is/storage/data/containers/capacity_1/r5_c0/x5GPuD_2026-08-19 17:21:17.774574.nc", "container_code": 30, 
+    "container_id": "r5_c0", 
+    "container": "capacity_1", 
+    "metadata_schema_version": 2, 
+    "aggregation_version": 1, 
+    "product_type": "native", 
+    "native_temporal_resolution": "3H", 
+    "native_spatial_resolution": 2.5, 
+    "spatial_coarsening_factor": 1, 
+    "temporal_aggregation_method": null, 
+    "spatial_aggregation_method": null, 
+    "aggregation_order": "temporal_then_spatial", 
+    "source_file_paths": ["/Users/bean/polar-is/storage/data/tmp/standardized/20260819_150049.nc"], 
+    "time_start": "2018-01-01T00:00:00.000000000", 
+    "time_end": "2018-01-31T21:00:00.000000000", 
+    "product_id": "a550bdb8cd8f255186bf890d58c5a3124e28f4b1ac6fbf91e132248f824545e4"
+    }
+```

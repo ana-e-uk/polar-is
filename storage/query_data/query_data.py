@@ -26,8 +26,8 @@ The query has the following information that overlaps with get_remote_data.py's 
 
 This script checks the storage for relevant data by:
     0. If at any point, no data is found, 
-        return message to API and ask if data should be downloaded. If yes, begin download process
-    1. Determining which partitions the query overlaps 
+        return message to API and ask if data should be downloaded. If yes, begin download process [Calls functions in storage.initialize.get_remote_data]
+    1. Determining which partitions (containers) the query overlaps 
     2. Opening the metadata of these partitions
     3. Determining if any files within partition have the requested
         * repo, dataset, and variable, time range, resolution, additional parameters
