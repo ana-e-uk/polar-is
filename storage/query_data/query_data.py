@@ -27,14 +27,19 @@ The query has the following information that overlaps with get_remote_data.py's 
 This script checks the storage for relevant data by:
     0. If at any point, no data is found, 
         return message to API and ask if data should be downloaded. If yes, begin download process [Calls functions in storage.initialize.get_remote_data]
-    1. Determining which partitions (containers) the query overlaps 
-    2. Opening the metadata of these partitions
-    3. Determining if any files within partition have the requested
-        * repo, dataset, and variable, time range, resolution, additional parameters
-    4. If yes, refine spatial filter with coordinates
-    5. Determine which data to read and how
-    6. Compute calculation/query
-    7. Return result
+    1. Determine which "container capacity" should be used (depends on size of query region)
+    2. Determining which "containers" the query overlaps --> this gets us the correct spatial resolution and region
+    3. Opening the metadata of these containers
+    4. Determining if any files within partition have the requested
+        * time resolution --> this gets us the correct group subset
+        * repo, dataset, and variable, time range, additional parameters
+    5. If yes, refine spatial filter with coordinates --> this gets us the data to read for the query
+    6. Determine which data to read and how
+        * check if pre-aggregated data would help and if it exists
+        * order of data to read to compute functions required
+    7. Read data
+    8. Compute calculation/query
+    9. Return result
 """
 import xarray as xr
 
