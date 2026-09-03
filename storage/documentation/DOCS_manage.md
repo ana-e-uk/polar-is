@@ -81,34 +81,34 @@ Container codes and IDs are local to a capacity. The composite
 `(container, container_code)` is the globally meaningful identity.
 
 ## Full list of block metadata columns
-* repository - str - remote repository the data is from
-* dataset - str - dataset the data is from
-* variable - str 
-* spatial_resolution - float
-* temporal_resolution - str
-* start_year - str - beginning of time interval of block
-* start_month - str
-* end_year - str - end of time interval of block
-* end_month - str 
-* region - str - official name of region (e.g. "east" or "west" for CARRA dataset), or "COORDS" to signify data has specific bounds
-* additional_params - dict - any additional parameters that identify the dataset block
-* grid_type - str - currently: rectilinear or curvilinear 
+* repository - `str` - remote repository the data is from
+* dataset - `str` - dataset the data is from
+* variable - `str` 
+* spatial_resolution - `float`
+* temporal_resolution - `str`
+* start_year - `str` - beginning of time interval of block
+* start_month - `str`
+* end_year - `str` - end of time interval of block
+* end_month - `str` 
+* region - `str` - official name of region (e.g. "east" or "west" for CARRA dataset), or "COORDS" to signify data has specific bounds
+* additional_params - `dict` - any additional parameters that identify the dataset block
+* grid_type - `str` - currently: rectilinear or curvilinear 
 * dataset_bounds - list or null
-* block_summary - dict {lat_min, lat_max, lon_min, lon_max, var_min, var_max}
-* file_path - str - full direct file path
-* container_code - int - directory info
-* container_id - str
-* container - str
-* metadata_schema_version - int - versioning
-* aggregation_version - int
-* product_type - str - whether data is native or coarsened
-* native_temporal_resolution - str
-* native_spatial_resolution - int
-* spatial_coarsening_factor - int - container capacity: 1, 2, 4
-* temporal_aggregation_method - str or null
-* spatial_aggregation_method - str or null
-* aggregation_order - str - short description
-* source_file_paths - list
-* time_start - str
-* time_end - str
-* product_id - str - long identification number to avoid generating the same blocks
+* block_summary - `dict` {lat_min, lat_max, lon_min, lon_max, var_min, var_max}
+* file_path - `str` - full direct file path
+* container_code - `int` - directory info
+* container_id - `str`
+* container - `str`
+* metadata_schema_version - `int` - versioning
+* aggregation_version - `int`
+* product_type - `str` - whether data is native or coarsened
+* native_temporal_resolution - `str`
+* native_spatial_resolution - `int`
+* spatial_coarsening_factor - `int` - container capacity: 1, 2, 4
+* temporal_aggregation_method - `str` or null
+* spatial_aggregation_method - `str` or null
+* aggregation_order - `str` - short description
+* source_file_paths - `list`
+* time_start - `str`
+* time_end - `str`
+* product_id - `str` - long identification number to avoid generating the same blocks

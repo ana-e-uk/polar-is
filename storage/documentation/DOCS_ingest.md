@@ -96,25 +96,25 @@ matching capacity. Every capacity/time combination uses the same block writer.
 
 ```
         Native resolution groups: ERA5  - (Capacity-1, H)       - Capacity-1=0.25, 0.5
-                                  CARRA - (Capacity-1, 3H(?))   - Capacity-1=2.5km^2
+                                  CARRA - (Capacity-1, 3H)   - Capacity-1=2.5km^2
                                   WHOI  - (Capacity-1, 3H)      - Capacity-1=0.25
                                   EMSST - (Capacity-1, D)       - Capacity-1=0.25
 
         (Resulting groups) - datasets with blocks in group
                           (Capacity-1, H) - ERA5  
-                          (Capacity-1, 3H)- ERA5  CARRA(?)    WHOI
+                          (Capacity-1, 3H)- ERA5  CARRA       WHOI
                           (Capacity-1, D) - ERA5  CARRA       WHOI    EMSST
                           (Capacity-1, M) - ERA5  CARRA       WHOI    EMSST
                           (Capacity-1, Y) - ERA5  CARRA       WHOI    EMSST
 
         Resulting groups: (Capacity-2, H) - ERA5   
-                          (Capacity-2, 3H)- ERA5   CARRA(?)    WHOI
+                          (Capacity-2, 3H)- ERA5   CARRA       WHOI
                           (Capacity-2, D) - ERA5   CARRA       WHOI    EMSST
                           (Capacity-2, M) - ERA5   CARRA       WHOI    EMSST
                           (Capacity-2, Y) - ERA5   CARRA       WHOI    EMSST
 
                           (Capacity-4, H) - ERA5   
-                          (Capacity-4, 3H)- ERA5   CARRA(?)    WHOI
+                          (Capacity-4, 3H)- ERA5   CARRA       WHOI
                           (Capacity-4, D) - ERA5   CARRA       WHOI    EMSST
                           (Capacity-4, M) - ERA5   CARRA       WHOI    EMSST
                           (Capacity-4, Y) - ERA5   CARRA       WHOI    EMSST
