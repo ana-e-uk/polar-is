@@ -121,6 +121,15 @@ Block paths are derived from the spatial level, bucket ID, and block ID.
 Bucket codes and IDs are local to a spatial level. The composite
 `(spatial_level, bucket_code)` is the globally meaningful bucket identity.
 
+### Migrate block metadata scema to different versions
+To change your current metadata and indexing to a new/different version of the code, run terminal command:
+
+```python
+python -m storage.manage.migrate_{container/storage/*}_schema_v{*}.py
+```
+
+The `metadata_schema_version` parameter in the current block metadata lists the current metadata version of the blocks. For the newest version, use the script with the highest version number.
+
 
 ### Full list of block metadata columns
 * repository - `str` - remote repository the data is from
