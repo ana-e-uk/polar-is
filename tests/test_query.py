@@ -36,7 +36,7 @@ def test_normalizes_shared_query_without_source_filters():
     result = normalize_query(_query())
 
     assert result.variable == "sea_surface_temperature"
-    assert result.region == BoundingBox(-50.123, 20.679, 40.0, 80.0)
+    assert result.region == BoundingBox(309.877, 20.679, 40.0, 80.0)
     assert result.time_start == datetime(2020, 2, 1, 0)
     assert result.time_end == datetime(2020, 3, 31, 23)
     assert result.coarseness_factor == 2
@@ -46,6 +46,16 @@ def test_normalizes_shared_query_without_source_filters():
     assert result.repository is None
     assert result.dataset is None
     assert result.additional_parameters == {}
+
+
+def test_query_longitudes_match_the_storage_convention():
+    result = normalize_query(
+        _query(
+            region={"west": -180, "east": -20, "south": -10, "north": 10}
+        )
+    )
+
+    assert result.region == BoundingBox(180.0, 340.0, -10.0, 10.0)
 
 
 def test_query_storage_uses_the_normalized_query():

@@ -41,7 +41,7 @@ _TIME_PATTERN = re.compile(
 
 @dataclass(frozen=True)
 class BoundingBox:
-    """A query region rounded to thousandths of a degree."""
+    """A storage query region using longitudes in the [0, 360) range."""
 
     west: float
     east: float
@@ -155,6 +155,8 @@ def _normalize_region(value: Any) -> BoundingBox:
         raise ValueError("region must satisfy -180 <= west < east <= 180")
     if not -90 <= coordinates["south"] < coordinates["north"] <= 90:
         raise ValueError("region must satisfy -90 <= south < north <= 90")
+    coordinates["west"] %= 360
+    coordinates["east"] %= 360
     return BoundingBox(**coordinates)
 
 

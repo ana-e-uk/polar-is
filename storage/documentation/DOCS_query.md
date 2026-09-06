@@ -9,8 +9,9 @@ to identify the repository or dataset that supplies the data.
 - `variable`: one canonical variable from the values of the `variables`
   dictionaries in `config.yaml`.
 - `region`: a bounding box with `west`, `east`, `south`, and `north`. Values are
-  rounded to three decimal places. Bounding boxes that cross the antimeridian
-  are not supported yet.
+  entered with longitudes from -180 to 180 and rounded to three decimal places.
+  Normalized query longitudes use the storage convention from 0 to 360. An
+  internal `west` greater than `east` therefore wraps through 360/0.
 - `time_start` and `time_end`: `YYYY-MM`, `YYYY-MM-DD`, or `YYYY-MM-DDTHH`.
   Missing start components use the beginning of the selected period; missing
   end components use its end. Minutes and finer units are not accepted.
