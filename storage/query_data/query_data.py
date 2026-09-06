@@ -1,35 +1,16 @@
-"""
-Given a query, find the requested data and return the result of requested computation.
-
-This script checks the storage for relevant data by:
-    0. If at any point, no data is found, 
-        return message to API and ask if data should be downloaded. If yes, begin download process [Calls functions in storage.initialize.get_remote_data]
-    1. Determine which "container capacity" should be used (depends on size of query region)
-    2. Determining which "containers" the query overlaps with storage.ingest_data.make_data_blocks.block_bounds_and_extrema
-        --> this gets us the correct spatial resolution and region
-    3. Open metadata of containers and determine if any files within partition have the requested
-        * time resolution --> this gets us the correct group subset
-        * repo, dataset, and variable, time range, additional parameters
-    4. If yes, refine spatial filter with coordinates with storage.query_data.space_containers.map_containers OR container_for_point
-        --> this gets us the data to read for the query
-    5. Determine which data to read and how
-        * check if pre-aggregated data would help and if it exists
-        * order of data to read to compute functions required
-    6. Read data
-    7. Compute calculation/query
-    8. Return result
-"""
+"""Plan and execute a query against the shared storage index."""
 from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 import math
 from pathlib import Path
 import re
 from typing import Any, Mapping
 
-from polaris.config import Settings, get_settings
+from polaris.config import ContainerScheme, Settings, get_settings
 
 
 TIME_UNITS = ("Hour", "Day", "Month", "Year", "Source")
@@ -64,6 +45,24 @@ class Query:
     repository: str | None = None
     dataset: str | None = None
     additional_parameters: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RequestedDataGrid:
+    """The spatial and temporal resolution requested by a query."""
+
+    coarseness_factor: int
+    time_unit: str
+
+
+@dataclass(frozen=True)
+class QueryPlan:
+    """The initial plan before index records are filtered."""
+
+    query: Query
+    requested_data_grid: RequestedDataGrid
+    spatial_level: ContainerScheme
+    index_records: tuple[dict[str, Any], ...]
 
 
 def available_repositories(settings: Settings | None = None) -> tuple[str, ...]:
@@ -304,28 +303,61 @@ def normalize_query(
         additional_parameters=dict(additional_parameters),
     )
 
+
+def determine_requested_data_grid(query: Query) -> RequestedDataGrid:
+    """Return the two resolution components that define the requested grid."""
+    return RequestedDataGrid(query.coarseness_factor, query.time_unit)
+
+
+def map_grid_to_spatial_level(
+    requested_data_grid: RequestedDataGrid,
+    settings: Settings | None = None,
+) -> ContainerScheme:
+    """Return the configured spatial level for the requested coarseness."""
+    settings = settings or get_settings()
+    return settings.coarseness_to_spatial_level[
+        requested_data_grid.coarseness_factor
+    ]
+
+
+def read_spatial_level_index(
+    spatial_level: ContainerScheme,
+) -> tuple[dict[str, Any], ...]:
+    """Read the JSONL index configured for one spatial level."""
+    records = []
+    with spatial_level.metadata.open() as file:
+        for line in file:
+            if line.strip():
+                records.append(json.loads(line))
+    return tuple(records)
+
+
+def plan_query(
+    query: Query | Mapping[str, Any],
+    settings: Settings | None = None,
+) -> QueryPlan:
+    """Build the initial plan using only the requested spatial level."""
+    settings = settings or get_settings()
+    normalized_query = (
+        query if isinstance(query, Query) else normalize_query(query, settings)
+    )
+    requested_data_grid = determine_requested_data_grid(normalized_query)
+    spatial_level = map_grid_to_spatial_level(requested_data_grid, settings)
+    return QueryPlan(
+        query=normalized_query,
+        requested_data_grid=requested_data_grid,
+        spatial_level=spatial_level,
+        index_records=read_spatial_level_index(spatial_level),
+    )
+
+
 def _found_missing_data(missing: dict) -> bool:
     '''Generates API message about missing data. 
     Asks user if it should be downloaded and returns answer.'''
 
-def _get_query_region_size():
-    '''Compute and return area of query region.'''
-
-def _match_query_to_container_size(area: float):
-    '''Return the container directory that should be used. 
-    Choose the largest container with:
-        * size smaller than the area of the query.
-        * size only marginally larger than the area of the query.
-    '''
-    allowed_buffer: float # difference in area that container size can be
-    container_areas = {}    # area of all containers (currently: capacity 1, 2, 4)
-
 def _get_overlap_of_query_region_and_containers():
     '''Return all containers that the query region overlaps.'''
     #  maybe: use storage.ingest_data.make_data_blocks.block_bounds_and_extrema
-
-def _read_container_metadata(capacity: str):
-    '''Read the metadata.jsonl for the containers of the given capacity.'''
 
 def _filter_containers():
     '''Filter container by their metadata by other query parameters:
