@@ -1,17 +1,19 @@
 # Ingesting data into Polaris system
 
 ## Steps to manually ingest data
-1. Make sure the downloaded data jsonl file exists at the directory specified in `downloaded_data` in **config.yaml**. Each row of the file should contain one dictionary with metadata of a group of files that can be combined and standardized.
+1. Data to ingest will be in the `downloaded_data_dir` specified in **config.yaml**. Currently, it is: **storage/data/tmp/downloaded/**.
 
-2. Standardize all files listed in the metadata of the **storage/data/downloaded/** directory. The standardized data will be stored in **storage/data/standardized/** and the downloaded files will be deleted once the standard ones are saved. In the terminal, run:
+2. Polar-is will process the files listed in the file specified by `downloaded_data` in **config.yaml**. Each row of the file should contain one dictionary with metadata of a group of files that can be combined and standardized.
+
+3. Begin standardization with the following command. The standardized data will be stored in **storage/data/tmp/standardized/** (`standardized_data_dir` in config file). The downloaded files will be deleted once the standard ones are saved. Terminal command:
 
         python -m storage.ingest_data.standardize
 
-3. Generate or validate every configured spatial container scheme:
+4. Generate or validate every configured spatial container scheme:
 
         python -m storage.manage.space_containers
 
-4. Create the complete spatio-temporal aggregate hierarchy. Every product is
+5. Create the complete spatio-temporal aggregate hierarchy. Every product is
    divided into blocks using its configured capacity:
 
         python -m storage.ingest_data.aggregate_data
@@ -100,25 +102,25 @@ and maximum variables so query results can combine their values correctly.
 
 ```
         Native resolution groups: ERA5  - (Capacity-1, H)       - Capacity-1=0.25, 0.5
-                                  CARRA - (Capacity-1, 3H(?))   - Capacity-1=2.5km^2
+                                  CARRA - (Capacity-1, 3H)   - Capacity-1=2.5km^2
                                   WHOI  - (Capacity-1, 3H)      - Capacity-1=0.25
                                   EMSST - (Capacity-1, D)       - Capacity-1=0.25
 
         (Resulting groups) - datasets with blocks in group
                           (Capacity-1, H) - ERA5  
-                          (Capacity-1, 3H)- ERA5  CARRA(?)    WHOI
+                          (Capacity-1, 3H)- ERA5  CARRA       WHOI
                           (Capacity-1, D) - ERA5  CARRA       WHOI    EMSST
                           (Capacity-1, M) - ERA5  CARRA       WHOI    EMSST
                           (Capacity-1, Y) - ERA5  CARRA       WHOI    EMSST
 
         Resulting groups: (Capacity-2, H) - ERA5   
-                          (Capacity-2, 3H)- ERA5   CARRA(?)    WHOI
+                          (Capacity-2, 3H)- ERA5   CARRA       WHOI
                           (Capacity-2, D) - ERA5   CARRA       WHOI    EMSST
                           (Capacity-2, M) - ERA5   CARRA       WHOI    EMSST
                           (Capacity-2, Y) - ERA5   CARRA       WHOI    EMSST
 
                           (Capacity-4, H) - ERA5   
-                          (Capacity-4, 3H)- ERA5   CARRA(?)    WHOI
+                          (Capacity-4, 3H)- ERA5   CARRA       WHOI
                           (Capacity-4, D) - ERA5   CARRA       WHOI    EMSST
                           (Capacity-4, M) - ERA5   CARRA       WHOI    EMSST
                           (Capacity-4, Y) - ERA5   CARRA       WHOI    EMSST
