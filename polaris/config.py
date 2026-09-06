@@ -32,6 +32,8 @@ class Settings:
     container_schemes: dict[str, ContainerScheme]
     coarseness_to_spatial_level: dict[int, ContainerScheme]
     temporal_aggregation_resolutions: tuple[str, ...]
+    supported_query_functions: tuple[str, ...]
+    function_aggregation_methods: tuple[str, ...]
     # dictionaries
     name_docs: dict
     aggregation_methods: dict
@@ -71,6 +73,10 @@ def get_settings() -> Settings:
         coarseness_to_spatial_level=coarseness_to_spatial_level,
         temporal_aggregation_resolutions=tuple(
             raw["temporal_aggregation_resolutions"]
+        ),
+        supported_query_functions=tuple(raw["supported_query_functions"]),
+        function_aggregation_methods=tuple(
+            raw["function_aggregation_methods"]
         ),
         name_docs=raw.get("name_docs", {}),
         aggregation_methods=raw["aggregation_methods"],

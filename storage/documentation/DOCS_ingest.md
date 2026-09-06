@@ -126,3 +126,26 @@ and maximum variables so query results can combine their values correctly.
                           (Capacity-4, Y) - ERA5   CARRA       WHOI    EMSST
 
 ```
+
+Some statistics for accurate aggregation are retained inside each aggregate NetCDF block.
+
+`capacity_2` and `capacity_4` blocks contain:
+
+- `polaris_weighted_sum`
+- `polaris_weight_sum`
+- `polaris_valid_count`
+- `polaris_min`
+- `polaris_max`
+
+They preserve spatially and temporally varying statistics for combining selected blocks.
+
+For blocks \(i\), the executor can calculate:
+
+```text
+weighted_sum = sum(weighted_sum_i)
+weight_sum   = sum(weight_sum_i)
+valid_count  = sum(valid_count_i)
+mean         = weighted_sum / weight_sum
+min          = min(min_i)
+max          = max(max_i)
+```

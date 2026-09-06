@@ -303,7 +303,9 @@ def add_aggregate_statistics(
     values = result[variable]
     valid = values.notnull()
     result["polaris_weighted_sum"] = (values * cell_area).where(valid, 0)
-    result["polaris_weight_sum"] = cell_area.where(valid, 0)
+    result["polaris_weight_sum"] = cell_area.where(valid, 0).transpose(
+        *values.dims
+    )
     result["polaris_valid_count"] = valid.astype(np.int32)
     result["polaris_min"] = values
     result["polaris_max"] = values
