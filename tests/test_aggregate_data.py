@@ -9,6 +9,8 @@ import xarray as xr
 
 from polaris.config import ContainerScheme
 from storage.ingest_data.aggregate_data import (
+    AGGREGATE_STATISTICS,
+    add_aggregate_statistics,
     aggregate_record,
     aggregate_records,
     eligible_temporal_resolutions,
@@ -16,6 +18,7 @@ from storage.ingest_data.aggregate_data import (
     spatially_aggregate,
     temporally_aggregate,
 )
+from storage.ingest_data.make_data_blocks import block_path
 
 
 def _time_dataset(periods=24, frequency="1h"):
@@ -141,6 +144,30 @@ def test_spatial_aggregation_pads_edges_and_handles_auxiliaries():
     assert result["value"].encoding["complevel"] == 3
 
 
+def test_spatial_mean_uses_area_weights_and_keeps_statistics():
+    data = xr.Dataset(
+        {"value": (("timestamp", "y", "x"), [[[0.0, 10.0]]])},
+        coords={
+            "timestamp": pd.date_range("2020-01-01", periods=1),
+            "latitude": (("y", "x"), [[0.0, 60.0]]),
+            "longitude": (("y", "x"), [[0.0, 1.0]]),
+        },
+    )
+    result = spatially_aggregate(
+        add_aggregate_statistics(data, "value"),
+        "value",
+        2,
+        "mean",
+    )
+
+    np.testing.assert_allclose(result["value"], [[[10.0 / 3.0]]])
+    np.testing.assert_allclose(result["polaris_weighted_sum"], [[[5.0]]])
+    np.testing.assert_allclose(result["polaris_weight_sum"], [[[1.5]]])
+    assert result["polaris_valid_count"].item() == 2
+    assert result["polaris_min"].item() == 0.0
+    assert result["polaris_max"].item() == 10.0
+
+
 def _settings(tmp_path, targets=("1H", "3H")):
     schemes = {}
     for factor in (1, 2, 4):
@@ -183,7 +210,7 @@ def test_every_capacity_time_combination_uses_write_blocks(tmp_path):
             (
                 scheme.name,
                 kwargs["product_metadata"]["temporal_resolution"],
-                kwargs["product_metadata"]["spatial_coarsening_factor"],
+                kwargs["product_metadata"]["coarseness_factor"],
                 data.sizes["timestamp"],
             )
         )
@@ -230,10 +257,20 @@ def test_small_end_to_end_hierarchy_writes_each_capacity_and_time(tmp_path):
     for factor, scheme in zip((1, 2, 4), settings.container_schemes.values()):
         records = [json.loads(line) for line in scheme.metadata.read_text().splitlines()]
         assert {item["temporal_resolution"] for item in records} == {"1H", "3H"}
-        assert {item["spatial_coarsening_factor"] for item in records} == {factor}
-        assert all(item["container"] == scheme.name for item in records)
-        assert all(Path(item["file_path"]).is_file() for item in records)
+        assert {item["coarseness_factor"] for item in records} == {factor}
+        assert all(item["spatial_level"] == scheme.name for item in records)
+        assert all(
+            block_path(scheme, item["bucket_id"], item["block_id"]).is_file()
+            for item in records
+        )
         assert all(item["block_summary"]["var_min"] is not None for item in records)
+        for item in records:
+            path = block_path(scheme, item["bucket_id"], item["block_id"])
+            with xr.open_dataset(path) as block:
+                if item["product_type"] == "aggregate":
+                    assert all(name in block for name in AGGREGATE_STATISTICS)
+                else:
+                    assert all(name not in block for name in AGGREGATE_STATISTICS)
 
 
 def test_source_cleanup_occurs_only_after_all_records_succeed(tmp_path):

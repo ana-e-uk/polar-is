@@ -8,6 +8,7 @@ import xarray as xr
 
 from polaris.config import ContainerScheme
 from storage.ingest_data.make_data_blocks import (
+    block_path,
     block_bounds_and_extrema,
     make_data_blocks,
     update_container_file_counts,
@@ -117,21 +118,22 @@ def test_make_data_blocks_uses_new_schema_and_preserves_variables(tmp_path):
     make_data_blocks([_record(source_path)], scheme)
 
     records = _read_json_lines(scheme.metadata)
-    assert {record["container_id"] for record in records} == {"r3_c0", "r3_c1"}
+    assert {record["bucket_id"] for record in records} == {"r3_c0", "r3_c1"}
     for record in records:
-        assert record["metadata_schema_version"] == 2
-        assert record["container"] == "capacity_1"
-        assert isinstance(record["container_code"], int)
-        assert "bucket_id" not in record and "bucket_code" not in record
+        assert record["metadata_schema_version"] == 3
+        assert record["spatial_level"] == "capacity_1"
+        assert isinstance(record["bucket_code"], int)
+        assert "container_id" not in record and "container_code" not in record
         assert record["dataset_bounds"] == [0.0, 80.0, 0.0, 20.0]
-        assert record["spatial_coarsening_factor"] == 1
+        assert record["coarseness_factor"] == 1
         assert record["native_temporal_resolution"] == "1H"
         assert record["product_type"] == "native"
         assert len(record["block_id"]) == 32
-        expected_longitude = 10.0 if record["container_id"] == "r3_c0" else 70.0
+        assert "file_path" not in record
+        expected_longitude = 10.0 if record["bucket_id"] == "r3_c0" else 70.0
         expected_extrema = (
             (86.0, 100.0)
-            if record["container_id"] == "r3_c0"
+            if record["bucket_id"] == "r3_c0"
             else (88.11, 99.20)
         )
         assert record["block_summary"] == {
@@ -142,9 +144,9 @@ def test_make_data_blocks_uses_new_schema_and_preserves_variables(tmp_path):
             "var_min": expected_extrema[0],
             "var_max": expected_extrema[1],
         }
-        block_path = Path(record["file_path"])
-        assert block_path.parent.name == record["container_id"]
-        with xr.open_dataset(block_path) as block:
+        path = block_path(scheme, record["bucket_id"], record["block_id"])
+        assert path.parent.name == record["bucket_id"]
+        with xr.open_dataset(path) as block:
             assert block["time_only"].dims == ("timestamp",)
             assert block["scalar"].dims == ()
             assert block["value"].isnull().any().item()
@@ -195,7 +197,8 @@ def test_make_data_blocks_preserves_source_compression(tmp_path):
     scheme, _ = _scheme(tmp_path)
     make_data_blocks([_record(source_path)], scheme)
     for record in _read_json_lines(scheme.metadata):
-        with xr.open_dataset(record["file_path"]) as block:
+        path = block_path(scheme, record["bucket_id"], record["block_id"])
+        with xr.open_dataset(path) as block:
             encoding = block["value"].encoding
             assert encoding["zlib"] is True
             assert encoding["complevel"] == 4

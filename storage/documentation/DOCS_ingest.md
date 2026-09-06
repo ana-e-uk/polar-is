@@ -38,16 +38,16 @@ projection.
 
 This work is done by the script **polar-is/storage/ingest_data/make_data_blocks.py**.
 
-### Containers
-Currently, we define three containers that we give colloquial names: *buckets, basins, barrels*.
-* Buckets - the canonical container whose size is defined in **config.yaml**. All other container capacities are defined as a factor of this container. In the code, buckets are named *Capacity-1*
-* Basins - In the code, basins are *Capacity-2*. They are 2x larger than buckets.
-* Barrels - In the code, barrels are *Capacity-4*. They are 4x larger than buckets.
+### Spatial levels and buckets
+The common map is divided into buckets at three spatial levels:
+* Capacity-1 is the canonical bucket size.
+* Capacity-2 buckets are twice as large.
+* Capacity-4 buckets are four times as large.
 
 Container information is stored in `container_schemes` in **config.yaml**.
 
 ## Index data
-Each capacity has a JSONL metadata index describing its blocks. The information includes:
+Each spatial level has a JSONL metadata index describing its blocks. The information includes:
 * Grid - original (and current) projection of data
 * Datasets - names of datasets whose data can be found within the container
 * Dataset - each dataset keeps:
@@ -63,8 +63,10 @@ Each capacity has a JSONL metadata index describing its blocks. The information 
     * Spatial resolution
     * Variable
     * Additional parameters
-    * Physical location range (currently file path)
 * Bounds - total spatial ranges, temporal ranges, resolutions, variables. This can be used to filter out queries that definitely do not overlap with the current data.
+
+Block paths are derived from spatial level, bucket ID, and block ID rather
+than stored in the index.
 
 This is stored separately from the compact spatial container definitions.
 
@@ -93,6 +95,8 @@ Starting with capacity-1 row 0 column 0 (r,c):
 
 We coarsen native data to the desired resolution before splitting it into the
 matching capacity. Every capacity/time combination uses the same block writer.
+Aggregate blocks also retain weighted sum, weight sum, valid count, minimum,
+and maximum variables so query results can combine their values correctly.
 
 ```
         Native resolution groups: ERA5  - (Capacity-1, H)       - Capacity-1=0.25, 0.5

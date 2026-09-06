@@ -17,7 +17,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from polaris.config import get_settings
 from storage.ingest_data.standardize import read_metadata
-from storage.ingest_data.make_data_blocks import read_container_definitions
+from storage.ingest_data.make_data_blocks import (
+    block_path,
+    read_container_definitions,
+)
 from storage.manage.space_containers import (
     container_id_from_code,
     grid_for_scheme,
@@ -36,6 +39,10 @@ def _block_records():
     records = read_metadata(metadata_path)
     assert records, f"No block records found in {metadata_path}"
     return records
+
+
+def _path(record):
+    return block_path(SCHEME, record["bucket_id"], record["block_id"])
 
 
 def _canonical_bounds(container_code):
@@ -70,39 +77,39 @@ def dirs_and_blocks_exist():
     )
 
     for record in records:
-        block_path = Path(record["file_path"])
-        assert block_path.parent.is_dir(), (
-            f"Missing container directory: {block_path.parent}"
+        path = _path(record)
+        assert path.parent.is_dir(), (
+            f"Missing container directory: {path.parent}"
         )
-        assert block_path.is_file(), f"Missing block file: {block_path}"
+        assert path.is_file(), f"Missing block file: {path}"
 
 def verify_block_container():
     """Check container_id matches the sub-directory containing the block."""
     for record in _block_records():
-        container_code = record["container_code"]
+        container_code = record["bucket_code"]
         expected_id = container_id_from_code(container_code, GRID)
-        block_path = Path(record["file_path"])
+        path = _path(record)
 
-        assert record["container_id"] == expected_id, (
+        assert record["bucket_id"] == expected_id, (
             f"Code {container_code} maps to {expected_id}, not "
-            f"{record['container_id']}"
+            f"{record['bucket_id']}"
         )
-        assert block_path.parent.name == expected_id, (
-            f"Block {block_path} is stored under the wrong container directory"
+        assert path.parent.name == expected_id, (
+            f"Block {path} is stored under the wrong container directory"
         )
 
 def cells_within_container():
     """Check every cell containing block data belongs to its container."""
     for record in _block_records():
-        block_path = Path(record["file_path"])
-        expected_code = record["container_code"]
+        path = _path(record)
+        expected_code = record["bucket_code"]
         canonical_bounds = _canonical_bounds(expected_code)
 
-        with xr.open_dataset(block_path) as block:
+        with xr.open_dataset(path) as block:
             container_codes = map_containers(block, GRID)
             variable_name = record["variable"]
             assert variable_name in block.data_vars, (
-                f"{block_path} does not contain {variable_name!r}"
+                f"{path} does not contain {variable_name!r}"
             )
 
             variable = block[variable_name]
@@ -116,11 +123,11 @@ def cells_within_container():
                 cells_with_data = cells_with_data.any(dim=non_spatial_dims)
 
             assert cells_with_data.any().compute().item(), (
-                f"Block {block_path} contains no valid data"
+                f"Block {path} contains no valid data"
             )
             wrong_container = cells_with_data & (container_codes != expected_code)
             assert not wrong_container.any().compute().item(), (
-                f"Block {block_path} contains valid cells assigned to another container"
+                f"Block {path} contains valid cells assigned to another container"
             )
 
         summary = record["block_summary"]
@@ -132,21 +139,21 @@ def cells_within_container():
 def mask_works():
     """Confirm values outside the container mask are NaN."""
     for record in _block_records():
-        block_path = Path(record["file_path"])
-        expected_code = record["container_code"]
+        path = _path(record)
+        expected_code = record["bucket_code"]
 
-        with xr.open_dataset(block_path) as block:
+        with xr.open_dataset(path) as block:
             container_codes = map_containers(block, GRID)
             outside_container = container_codes != expected_code
             spatial_variables = _spatial_data_variables(block)
             assert spatial_variables, (
-                f"Block {block_path} has no spatial data variables"
+                f"Block {path} has no spatial data variables"
             )
 
             for variable_name, variable in spatial_variables.items():
                 outside_values = variable.where(outside_container)
                 assert outside_values.isnull().all().compute().item(), (
-                    f"{variable_name!r} in {block_path} has non-NaN values "
+                    f"{variable_name!r} in {path} has non-NaN values "
                     "outside its container mask"
                 )
 
