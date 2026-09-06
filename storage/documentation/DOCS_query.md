@@ -33,6 +33,13 @@ to identify the repository or dataset that supplies the data.
 Repository and dataset narrow the acceptable variable options. With neither
 filter, variables are the union of the canonical variables from every dataset.
 
+## Initial query plan
+
+The requested data grid is `(coarseness_factor, time_unit)`. The planner maps
+the coarseness factor through `coarseness_to_spatial_level`, then reads only
+that spatial level's configured `metadata.jsonl` index. Later planning steps
+filter those index records into block candidates.
+
 ## Example
 
 ```python

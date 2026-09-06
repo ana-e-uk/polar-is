@@ -1,13 +1,18 @@
 from datetime import datetime
+from dataclasses import replace
+import json
 
 import pytest
 
+from polaris.config import ContainerScheme, get_settings
 from storage.query_data.query_data import (
     BoundingBox,
     QueryStorage,
+    RequestedDataGrid,
     available_additional_parameters,
     available_datasets,
     available_variables,
+    plan_query,
     normalize_query,
 )
 
@@ -64,6 +69,44 @@ def test_query_storage_uses_the_normalized_query():
     assert storage.query.variable == "sea_surface_temperature"
     assert storage.query.coarseness_factor == 2
     assert storage.files_for_func_list == []
+
+
+def test_plan_reads_only_the_requested_spatial_level(tmp_path):
+    selected = ContainerScheme(
+        name="capacity_2",
+        factor=2,
+        data_dir=tmp_path / "capacity_2",
+        metadata=tmp_path / "capacity_2" / "metadata.jsonl",
+        definitions=tmp_path / "capacity_2.json",
+    )
+    unselected = ContainerScheme(
+        name="capacity_1",
+        factor=1,
+        data_dir=tmp_path / "capacity_1",
+        metadata=tmp_path / "capacity_1" / "metadata.jsonl",
+        definitions=tmp_path / "capacity_1.json",
+    )
+    selected.metadata.parent.mkdir()
+    unselected.metadata.parent.mkdir()
+    records = [{"block_id": "first"}, {"block_id": "second"}]
+    selected.metadata.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n"
+    )
+    unselected.metadata.write_text("this index must not be read\n")
+    settings = replace(
+        get_settings(),
+        container_schemes={
+            "capacity_1": unselected,
+            "capacity_2": selected,
+        },
+        coarseness_to_spatial_level={1: unselected, 2: selected},
+    )
+
+    plan = plan_query(_query(coarseness_factor=2), settings)
+
+    assert plan.requested_data_grid == RequestedDataGrid(2, "Day")
+    assert plan.spatial_level is selected
+    assert plan.index_records == tuple(records)
 
 
 def test_source_filters_and_dataset_parameters_are_validated():
