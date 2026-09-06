@@ -1,48 +1,49 @@
 # Querying data
 
-Given a query from the command line or web interface API, find the requested data and return the result of the requested computation.
+The API and CLI pass the same query to `normalize_query()` before storage
+planning. A normalized query describes the requested result; it does not need
+to identify the repository or dataset that supplies the data.
 
-## Query Parameters:
+## Required fields
 
-### List of query inputs:
-* function - list[str] - list of function to calculate (timeseries, heatmap, find time, find area)
-* repository:  `Optional: str`
-* dataset - `Optional: str`
-* variable - `str`
-* start_year - `int` - format YYYY
-* start_month - `int` - must be in interval [1, 12]
-* start_day - `int` - must be in interval [1, 31]
-* start_time - `str` - format "HH:MM"
-* end_year - `int`  - format YYYY
-* end_month - `int` - must be in interval [1, 12]
-* end_day - `int` - must be in interval [1, 31]
-* end_time - `str` - format "HH:MM"
-* temporal_resolution - `str` - options: Hour, Day, Month, Year
-* region - `str` - domain/other region defn. (e.g. west/east domain for CARRA) OR "COORDS"
-* coordinates - `Coordinates | None` - Coordinates = `tuple[float, float, float, float]` - [min_lon, max_lon, min_lat, max_lat]
-* aggregation - `str` - options: mean, max, min
-* grid_type - `str` - desired grid type as CRS
-* spatial_resolution - `str` - optionsn: finest, coarsened by 2, coarsened by 4
-* additional_parameters -  `AdditionalParameters | None` - AdditionalParameters = `dict[str, Any]`
+- `variable`: one canonical variable from the values of the `variables`
+  dictionaries in `config.yaml`.
+- `region`: a bounding box with `west`, `east`, `south`, and `north`. Values are
+  entered with longitudes from -180 to 180 and rounded to three decimal places.
+  Normalized query longitudes use the storage convention from 0 to 360. An
+  internal `west` greater than `east` therefore wraps through 360/0.
+- `time_start` and `time_end`: `YYYY-MM`, `YYYY-MM-DD`, or `YYYY-MM-DDTHH`.
+  Missing start components use the beginning of the selected period; missing
+  end components use its end. Minutes and finer units are not accepted.
+- `coarseness_factor`: a key from `coarseness_to_spatial_level` in
+  `config.yaml`.
+- `time_unit`: `Hour`, `Day`, `Month`, `Year`, or `Source`.
+- `function`: an entry in `supported_query_functions` in `config.yaml`.
+- `aggregation_method`: an entry in `function_aggregation_methods` in
+  `config.yaml`.
 
-### Input:
+## Optional filters
 
-**Required Input**
-A query needs to contain the following input:
+- `repository`: a repository in `name_docs`.
+- `dataset`: a dataset in `name_docs`, restricted to `repository` when that
+  filter is present.
+- `additional_parameters`: dataset-specific parameter values from `name_docs`.
+  A dataset must be selected before fixing these values.
 
-1. A dataset. The dataset options are: each dataset independently, any available dataset combined to give an estimate answer, and any available datasets that provide an answer, but separately (not combined). 
-2. A variable. Variable options are: each variable of each dataset, variables that are defined as the same across different datasets combined, and variable shared amongst a set of datasets but treated independently. 
+Repository and dataset narrow the acceptable variable options. With neither
+filter, variables are the union of the canonical variables from every dataset.
 
-**Optional Input**
-A query may also specify: 
+## Example
 
-1. The \emph{height} of the measurements. The default is set at Earth surface level.
-2. The temporal and spatial resolutions, which default to Day and $0.5^{\circ}$. The temporal options are the native resolution of the data (usually the finest), hour, day, month, and year. The spatial options are "0", the non-aggregated (native) data resolution, "1" the data coarsened by a factor of two, and "2", the data coarsened by a factor of 4. This will be different for each dataset, which is why it is just defined with indexing the number of times the data is coarsened.
-3. The time range, which defaults to all the time range of the chosen dataset and variable.
-4. A spatial range in the form of a rectangular bounding box. The bounding box is defined by the values `[min_lon, max_lon, min_lat, max_lat]`. The default is the whole world.
-5. Additional dataset specific parameters that are also dimensions, for example pressure level, sensor band, ensemble member, etc..
-6. The aggregate function to use out of minimum, maximum, and mean aggregates. If none is specified, the default is the mean.
-7. The plots to return, defaulting to time series and heatmap.
-8. A filter value and predicate that specify a filter query. The default is none. 
-9. The grid type that the user wants the data in. The default is the native data grid for individual datasets, and the common grid for combined data.
-10. Additional parameters that may be required by a dataset or variable. This defaults to none.
+```python
+{
+    "variable": "sea_surface_temperature",
+    "region": {"west": -50.0, "east": 20.0, "south": 40.0, "north": 80.0},
+    "time_start": "2020-01",
+    "time_end": "2020-12",
+    "coarseness_factor": 2,
+    "time_unit": "Day",
+    "function": "timeseries",
+    "aggregation_method": "mean",
+}
+```

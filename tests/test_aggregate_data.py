@@ -163,6 +163,7 @@ def test_spatial_mean_uses_area_weights_and_keeps_statistics():
     np.testing.assert_allclose(result["value"], [[[10.0 / 3.0]]])
     np.testing.assert_allclose(result["polaris_weighted_sum"], [[[5.0]]])
     np.testing.assert_allclose(result["polaris_weight_sum"], [[[1.5]]])
+    assert result["polaris_weight_sum"].dims == ("timestamp", "y", "x")
     assert result["polaris_valid_count"].item() == 2
     assert result["polaris_min"].item() == 0.0
     assert result["polaris_max"].item() == 10.0
