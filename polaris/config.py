@@ -30,6 +30,7 @@ class Settings:
     # spatial container hierarchy
     container_grid: dict
     container_schemes: dict[str, ContainerScheme]
+    coarseness_to_spatial_level: dict[int, ContainerScheme]
     temporal_aggregation_resolutions: tuple[str, ...]
     # dictionaries
     name_docs: dict
@@ -50,6 +51,12 @@ def get_settings() -> Settings:
         )
         for name, values in raw["container_schemes"].items()
     }
+    coarseness_to_spatial_level = {
+        int(coarseness): schemes[spatial_level]
+        for coarseness, spatial_level in raw[
+            "coarseness_to_spatial_level"
+        ].items()
+    }
 
     return Settings(
         _initialize=PROJECT_ROOT / raw["initialize_dir"],
@@ -61,6 +68,7 @@ def get_settings() -> Settings:
         standardized_data_=PROJECT_ROOT / raw["standardized_data"],
         container_grid=raw["container_grid"],
         container_schemes=schemes,
+        coarseness_to_spatial_level=coarseness_to_spatial_level,
         temporal_aggregation_resolutions=tuple(
             raw["temporal_aggregation_resolutions"]
         ),

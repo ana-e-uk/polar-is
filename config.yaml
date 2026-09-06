@@ -34,6 +34,12 @@ container_schemes:
     metadata: storage/data/containers/capacity_4/metadata.jsonl
     definitions: storage/data/container_definitions/capacity_4.json
 
+# Home spatial level for each stored spatial coarseness factor.
+coarseness_to_spatial_level:
+  1: capacity_1
+  2: capacity_2
+  4: capacity_4
+
 temporal_aggregation_resolutions: [1H, 3H, 1D, 1MS, 1YS]
 
 ############ dictionaries ###########

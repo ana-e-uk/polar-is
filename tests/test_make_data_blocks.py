@@ -127,7 +127,7 @@ def test_make_data_blocks_uses_new_schema_and_preserves_variables(tmp_path):
         assert record["spatial_coarsening_factor"] == 1
         assert record["native_temporal_resolution"] == "1H"
         assert record["product_type"] == "native"
-        assert len(record["product_id"]) == 64
+        assert len(record["block_id"]) == 32
         expected_longitude = 10.0 if record["container_id"] == "r3_c0" else 70.0
         expected_extrema = (
             (86.0, 100.0)

@@ -15,7 +15,7 @@ from storage.ingest_data.aggregate_data import infer_native_temporal_resolution
 from storage.ingest_data.make_data_blocks import (
     AGGREGATION_VERSION,
     METADATA_SCHEMA_VERSION,
-    _json_identity,
+    _block_id,
     update_container_file_counts,
 )
 from storage.ingest_data.standardize import read_metadata
@@ -146,9 +146,16 @@ def migrate() -> None:
         identity = {
             key: value
             for key, value in record.items()
-            if key not in {"product_id", "block_summary", "file_path"}
+            if key
+            not in {
+                "product_id",
+                "block_id",
+                "block_summary",
+                "file_path",
+            }
         }
-        record["product_id"] = _json_identity(identity)
+        record.pop("product_id", None)
+        record["block_id"] = _block_id(identity)
         migrated.append(record)
     _write_json_atomically(capacity_1.metadata, migrated, json_lines=True)
     ensure_all_container_schemes()

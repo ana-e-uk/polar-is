@@ -171,14 +171,14 @@ def update_container_file_counts(scheme: ContainerScheme) -> None:
         raise
 
 
-def _json_identity(value: dict) -> str:
+def _block_id(value: dict) -> str:
     encoded = json.dumps(
         value,
         sort_keys=True,
         separators=(",", ":"),
         default=str,
     ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return hashlib.blake2b(encoded, digest_size=16).hexdigest()
 
 
 def _base_block_record(record: dict, product: dict) -> dict:
@@ -215,7 +215,7 @@ def _block_record(
     }
     return {
         **identity,
-        "product_id": _json_identity(identity),
+        "block_id": _block_id(identity),
         "block_summary": block_summary,
         "file_path": str(path),
     }
@@ -270,9 +270,9 @@ def write_blocks(
         read_metadata(scheme.metadata) if scheme.metadata.exists() else []
     )
     existing_by_id = {
-        item["product_id"]: item
+        item["block_id"]: item
         for item in existing_records
-        if "product_id" in item
+        if "block_id" in item
     }
     created_paths: list[Path] = []
     new_records: list[dict] = []
@@ -295,18 +295,18 @@ def write_blocks(
                 summary,
                 Path("pending"),
             )
-            product_id = provisional["product_id"]
-            if product_id in existing_by_id:
-                existing_path = Path(existing_by_id[product_id]["file_path"])
+            block_id = provisional["block_id"]
+            if block_id in existing_by_id:
+                existing_path = Path(existing_by_id[block_id]["file_path"])
                 if not existing_path.is_file():
                     raise FileNotFoundError(
-                        f"Metadata for {product_id} points to missing "
+                        f"Metadata for {block_id} points to missing "
                         f"block {existing_path}"
                     )
                 continue
             directory = scheme.data_dir / container_id
             directory.mkdir(parents=True, exist_ok=True)
-            output_path = directory / f"{product_id}.nc"
+            output_path = directory / f"{block_id}.nc"
             if output_path.exists():
                 raise FileExistsError(
                     f"Orphan block exists without metadata: {output_path}"
