@@ -6,9 +6,10 @@ A user must give a list of the data of interest that specifies the data they are
 ## Initial Settings
 * Coordinate reference metadata: we use a regular latitude-longitude projections that is referenced by all other native datasets. We refer to this projection as the *common map* $M$.
 
-* The bucket intervals are defined with a half-open interval, where the open side is the larger side. Bucket intervals are defined by one latitude interval and one longitude interval.
+* Spatial container intervals are half-open on their larger side, except the
+  global latitude maximum, and are defined by latitude/longitude intervals.
 
-* Bucket size:
+* Capacity-1 container size is defined in **config.yaml**
 
 * The dateline we use is UTC.
 

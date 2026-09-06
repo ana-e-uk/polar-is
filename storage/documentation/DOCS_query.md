@@ -1,8 +1,29 @@
 # Querying data
 
-Given a query from the command line or web interface API, find the requested data and return the result of requested computation. The query gives parameters of what functions need to be run and what plots the user is requesting.
+Given a query from the command line or web interface API, find the requested data and return the result of the requested computation.
 
 ## Query Parameters:
+
+### List of query inputs:
+* function - list[str] - list of function to calculate (timeseries, heatmap, find time, find area)
+* repository:  `Optional: str`
+* dataset - `Optional: str`
+* variable - `str`
+* start_year - `int` - format YYYY
+* start_month - `int` - must be in interval [1, 12]
+* start_day - `int` - must be in interval [1, 31]
+* start_time - `str` - format "HH:MM"
+* end_year - `int`  - format YYYY
+* end_month - `int` - must be in interval [1, 12]
+* end_day - `int` - must be in interval [1, 31]
+* end_time - `str` - format "HH:MM"
+* temporal_resolution - `str` - options: Hour, Day, Month, Year
+* region - `str` - domain/other region defn. (e.g. west/east domain for CARRA) OR "COORDS"
+* coordinates - `Coordinates | None` - Coordinates = `tuple[float, float, float, float]` - [min_lon, max_lon, min_lat, max_lat]
+* aggregation - `str` - options: mean, max, min
+* grid_type - `str` - desired grid type as CRS
+* spatial_resolution - `str` - optionsn: finest, coarsened by 2, coarsened by 4
+* additional_parameters -  `AdditionalParameters | None` - AdditionalParameters = `dict[str, Any]`
 
 ### Input:
 
