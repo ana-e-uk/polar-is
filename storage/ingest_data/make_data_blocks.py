@@ -24,7 +24,7 @@ from storage.manage.space_containers import (
 )
 
 
-METADATA_SCHEMA_VERSION = 2
+METADATA_SCHEMA_VERSION = 3
 AGGREGATION_VERSION = 1
 
 
@@ -181,21 +181,35 @@ def _block_id(value: dict) -> str:
     return hashlib.blake2b(encoded, digest_size=16).hexdigest()
 
 
+def block_path(
+    scheme: ContainerScheme,
+    bucket_id: str,
+    block_id: str,
+) -> Path:
+    """Return the conventional path for a stored block."""
+    return scheme.data_dir / bucket_id / f"{block_id}.nc"
+
+
+def timestamp_string(value) -> str:
+    """Return a metadata timestamp at second precision."""
+    return np.datetime_as_string(np.datetime64(value), unit="s")
+
+
 def _base_block_record(record: dict, product: dict) -> dict:
-    source_path = record.get("file_path")
     base = {**record}
     base.pop("file_path", None)
+    base.pop("source_file_paths", None)
+    if "additional_params" in base:
+        base["additional_parameters"] = base.pop("additional_params")
     if "coordinates" in base:
         base["dataset_bounds"] = base.pop("coordinates")
-    source_paths = product.get("source_file_paths")
-    if source_paths is None:
-        source_paths = [source_path] if source_path is not None else []
+    product = {**product}
+    product.pop("source_file_paths", None)
     return {
         **base,
         **product,
         "metadata_schema_version": METADATA_SCHEMA_VERSION,
         "aggregation_version": AGGREGATION_VERSION,
-        "source_file_paths": [str(path) for path in source_paths],
     }
 
 
@@ -205,19 +219,17 @@ def _block_record(
     container_code: int,
     container_id: str,
     block_summary: dict,
-    path: Path,
 ) -> dict:
     identity = {
         **base_record,
-        "container": scheme.name,
-        "container_code": container_code,
-        "container_id": container_id,
+        "spatial_level": scheme.name,
+        "bucket_code": container_code,
+        "bucket_id": container_id,
     }
     return {
         **identity,
         "block_id": _block_id(identity),
         "block_summary": block_summary,
-        "file_path": str(path),
     }
 
 
@@ -231,15 +243,15 @@ def _default_product_metadata(record: dict, data: xr.Dataset) -> dict:
     )
     spatial_resolution = record.get("spatial_resolution")
     timestamps = data.get("timestamp")
-    time_start = str(timestamps.values[0]) if timestamps is not None else None
-    time_end = str(timestamps.values[-1]) if timestamps is not None else None
+    time_start = timestamp_string(timestamps.values[0]) if timestamps is not None else None
+    time_end = timestamp_string(timestamps.values[-1]) if timestamps is not None else None
     return {
         "product_type": "native",
         "native_temporal_resolution": temporal_resolution,
         "temporal_resolution": temporal_resolution,
         "native_spatial_resolution": spatial_resolution,
         "spatial_resolution": spatial_resolution,
-        "spatial_coarsening_factor": 1,
+        "coarseness_factor": 1,
         "temporal_aggregation_method": None,
         "spatial_aggregation_method": None,
         "aggregation_order": "temporal_then_spatial",
@@ -293,11 +305,10 @@ def write_blocks(
                 code,
                 container_id,
                 summary,
-                Path("pending"),
             )
             block_id = provisional["block_id"]
             if block_id in existing_by_id:
-                existing_path = Path(existing_by_id[block_id]["file_path"])
+                existing_path = block_path(scheme, container_id, block_id)
                 if not existing_path.is_file():
                     raise FileNotFoundError(
                         f"Metadata for {block_id} points to missing "
@@ -306,7 +317,7 @@ def write_blocks(
                 continue
             directory = scheme.data_dir / container_id
             directory.mkdir(parents=True, exist_ok=True)
-            output_path = directory / f"{block_id}.nc"
+            output_path = block_path(scheme, container_id, block_id)
             if output_path.exists():
                 raise FileExistsError(
                     f"Orphan block exists without metadata: {output_path}"
@@ -314,7 +325,6 @@ def write_blocks(
             block = spatially_crop_block(data, mask)
             _write_netcdf_atomically(block, output_path)
             created_paths.append(output_path)
-            provisional["file_path"] = str(output_path)
             new_records.append(provisional)
         _append_metadata_atomically(scheme.metadata, new_records)
     except BaseException:

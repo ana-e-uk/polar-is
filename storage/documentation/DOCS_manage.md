@@ -106,20 +106,20 @@ coordinates are supported.
 
 ## Block metadata
 
-Every block record uses metadata schema version 2 and contains the source
+Every block record uses metadata schema version 3 and contains the source
 dataset fields plus:
 
-- `container`, `container_code`, and `container_id`
+- `spatial_level`, `bucket_code`, and `bucket_id`
 - `block_id` and `product_type`
 - native and resulting temporal/spatial resolutions
-- `spatial_coarsening_factor`
+- `coarseness_factor`
 - temporal and spatial aggregation methods
-- aggregation order/version and source paths
+- aggregation order/version
 - `block_summary` with cell-center bounds and scientific-variable extrema
-- `file_path`
 
-Container codes and IDs are local to a capacity. The composite
-`(container, container_code)` is the globally meaningful identity.
+Block paths are derived from the spatial level, bucket ID, and block ID.
+Bucket codes and IDs are local to a spatial level. The composite
+`(spatial_level, bucket_code)` is the globally meaningful bucket identity.
 
 
 ### Full list of block metadata columns

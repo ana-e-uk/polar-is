@@ -15,7 +15,11 @@ import pandas as pd
 import xarray as xr
 
 from polaris.config import get_settings
-from storage.ingest_data.make_data_blocks import _preserve_compression, write_blocks
+from storage.ingest_data.make_data_blocks import (
+    _preserve_compression,
+    timestamp_string,
+    write_blocks,
+)
 from storage.ingest_data.standardize import read_metadata
 from storage.manage.space_containers import ensure_container_scheme
 
@@ -49,6 +53,14 @@ _XR_FREQUENCY = {
     "1MS": "1MS",
     "1YS": "1YS",
 }
+
+AGGREGATE_STATISTICS = (
+    "polaris_weighted_sum",
+    "polaris_weight_sum",
+    "polaris_valid_count",
+    "polaris_min",
+    "polaris_max",
+)
 
 
 def normalize_temporal_resolution(value: str) -> str:
@@ -178,8 +190,9 @@ def temporally_aggregate(
     valid_labels = _complete_period_labels(data["timestamp"], native, target)
     scientific = _resample_reduce(data[variable], target, method)
     result = scientific.to_dataset(name=variable)
+    has_statistics = all(name in data for name in AGGREGATE_STATISTICS)
     for name, array in data.data_vars.items():
-        if name == variable:
+        if name == variable or name in AGGREGATE_STATISTICS:
             continue
         if "timestamp" in array.dims:
             result[name] = array.resample(
@@ -187,6 +200,31 @@ def temporally_aggregate(
             ).first(keep_attrs=True)
         else:
             result[name] = array
+    if has_statistics:
+        result["polaris_valid_count"] = data[
+            "polaris_valid_count"
+        ].resample(timestamp=_XR_FREQUENCY[target]).sum()
+        result["polaris_min"] = data["polaris_min"].resample(
+            timestamp=_XR_FREQUENCY[target]
+        ).min(skipna=True)
+        result["polaris_max"] = data["polaris_max"].resample(
+            timestamp=_XR_FREQUENCY[target]
+        ).max(skipna=True)
+        if method == "mean":
+            result["polaris_weighted_sum"] = data[
+                "polaris_weighted_sum"
+            ].resample(timestamp=_XR_FREQUENCY[target]).sum()
+            result["polaris_weight_sum"] = data[
+                "polaris_weight_sum"
+            ].resample(timestamp=_XR_FREQUENCY[target]).sum()
+        else:
+            valid = scientific.notnull()
+            result["polaris_weighted_sum"] = (
+                scientific * data["cell_area"]
+            ).where(valid, 0)
+            result["polaris_weight_sum"] = data["cell_area"].where(
+                valid, 0
+            )
     for name, coordinate in data.coords.items():
         if name == "timestamp" or name in result.coords:
             continue
@@ -220,12 +258,15 @@ def _coarsen_reduce(
     }
     if not windows:
         return array
-    coarsener = array.coarsen(windows, boundary="pad")
     if method == "first":
-        # For non-spatial dimensions: first element of windows is selected.
+        # The first element of windows [0:factor], [factor:2*factor], ...
+        # is exactly the strided selection 0, factor, 2*factor, ... . This
+        # preserves all non-spatial dimensions and works for NumPy, Dask,
+        # numeric, and non-numeric arrays without xarray's reduce callback
+        # having to interpret its temporary window axes.
         return array.isel(
             {
-                dimension:slice(0,None,factor)
+                dimension: slice(0, None, factor)
                 for dimension in windows
             }
         )
@@ -238,6 +279,35 @@ def _coarsen_reduce(
         result = reducer(skipna=True, keep_attrs=True)
         return result.where(array.coarsen(windows, boundary="pad").count() > 0)
     return reducer(skipna=True, keep_attrs=True)
+
+
+def add_aggregate_statistics(
+    data: xr.Dataset,
+    variable: str,
+) -> xr.Dataset:
+    """Add statistics used to combine spatial aggregate values correctly."""
+    result = data.copy()
+    if "cell_area" in result:
+        cell_area = result["cell_area"]
+    else:
+        latitude, _ = xr.broadcast(result["latitude"], result["longitude"])
+        cell_area = np.cos(np.deg2rad(latitude)).clip(min=0)
+        cell_area = cell_area.transpose("y", "x")
+        cell_area.name = "cell_area"
+        cell_area.attrs = {
+            "long_name": "relative grid-cell area",
+            "units": "relative",
+        }
+        result["cell_area"] = cell_area
+
+    values = result[variable]
+    valid = values.notnull()
+    result["polaris_weighted_sum"] = (values * cell_area).where(valid, 0)
+    result["polaris_weight_sum"] = cell_area.where(valid, 0)
+    result["polaris_valid_count"] = valid.astype(np.int32)
+    result["polaris_min"] = values
+    result["polaris_max"] = values
+    return result
 
 
 def _circularly_coarsen_longitude(
@@ -274,10 +344,21 @@ def spatially_aggregate(
     if factor < 1:
         raise ValueError("Spatial coarsening factor must be positive")
 
-    scientific = _coarsen_reduce(data[variable], factor, method)
+    has_statistics = all(name in data for name in AGGREGATE_STATISTICS)
+    if method == "mean" and has_statistics:
+        weighted_sum = _coarsen_reduce(
+            data["polaris_weighted_sum"], factor, "sum"
+        )
+        weight_sum = _coarsen_reduce(
+            data["polaris_weight_sum"], factor, "sum"
+        )
+        scientific = (weighted_sum / weight_sum).where(weight_sum > 0)
+        scientific.attrs = data[variable].attrs.copy()
+    else:
+        scientific = _coarsen_reduce(data[variable], factor, method)
     result = scientific.to_dataset(name=variable)
     for name, array in data.data_vars.items():
-        if name == variable:
+        if name == variable or name in AGGREGATE_STATISTICS:
             continue
         if not ({"y", "x"} & set(array.dims)):
             result[name] = array
@@ -287,6 +368,23 @@ def spatially_aggregate(
             array,
             factor,
             auxiliary_method,
+        )
+
+    if has_statistics:
+        result["polaris_weighted_sum"] = _coarsen_reduce(
+            data["polaris_weighted_sum"], factor, "sum"
+        )
+        result["polaris_weight_sum"] = _coarsen_reduce(
+            data["polaris_weight_sum"], factor, "sum"
+        )
+        result["polaris_valid_count"] = _coarsen_reduce(
+            data["polaris_valid_count"], factor, "sum"
+        )
+        result["polaris_min"] = _coarsen_reduce(
+            data["polaris_min"], factor, "min"
+        )
+        result["polaris_max"] = _coarsen_reduce(
+            data["polaris_max"], factor, "max"
         )
 
     if "latitude" in data.coords:
@@ -354,13 +452,12 @@ def _product_metadata(
         "spatial_resolution": _scaled_spatial_resolution(
             native_spatial, factor
         ),
-        "spatial_coarsening_factor": factor,
+        "coarseness_factor": factor,
         "temporal_aggregation_method": temporal_method,
         "spatial_aggregation_method": spatial_method,
         "aggregation_order": "temporal_then_spatial",
-        "time_start": str(timestamps.values[0]),
-        "time_end": str(timestamps.values[-1]),
-        "source_file_paths": [record["file_path"]],
+        "time_start": timestamp_string(timestamps.values[0]),
+        "time_end": timestamp_string(timestamps.values[-1]),
     }
 
 
@@ -389,13 +486,14 @@ def aggregate_record(
         native_resolution = infer_native_temporal_resolution(
             native["timestamp"], record["temporal_resolution"]
         )
+        native_with_statistics = add_aggregate_statistics(native, variable)
         targets = eligible_temporal_resolutions(
             native_resolution,
             settings.temporal_aggregation_resolutions,
         )
         for target in targets:
             temporal_data = temporally_aggregate(
-                native,
+                native_with_statistics,
                 variable,
                 native_resolution,
                 target,
@@ -405,8 +503,10 @@ def aggregate_record(
                 continue
             for name, scheme in settings.container_schemes.items():
                 factor = scheme.factor
+                is_aggregate = target != native_resolution or factor != 1
+                data_for_spatial = temporal_data if is_aggregate else native
                 product = spatially_aggregate(
-                    temporal_data,
+                    data_for_spatial,
                     variable,
                     factor,
                     spatial_method,
