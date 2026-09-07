@@ -147,6 +147,7 @@ def test_plan_filters_refines_and_groups_matching_blocks(tmp_path):
         record(
             "second",
             bucket_id="r2_c0",
+            time_end="2020-01-15T00:00:00",
             block_summary={
                 "lon_min": 10.0,
                 "lon_max": 20.0,
@@ -211,6 +212,18 @@ def test_plan_filters_refines_and_groups_matching_blocks(tmp_path):
         ("copernicusclimatedatastore", "carra_height"),
         ("noaancei", "emsst"),
     }
+    height_15_coverage = next(
+        coverage
+        for coverage in plan.coverage.groups
+        if coverage.group.repository == "copernicusclimatedatastore"
+        and coverage.group.additional_parameters == {"height": "15m"}
+    )
+    assert ("r2_c0", datetime(2020, 1, 15)) in height_15_coverage.hit_set
+    assert ("r2_c0", datetime(2020, 1, 16)) in height_15_coverage.miss_set
+    assert ("r1_c0", datetime(2020, 1, 1)) in height_15_coverage.miss_set
+    assert len(height_15_coverage.hit_set) == 46
+    assert len(height_15_coverage.miss_set) == 78
+    assert height_15_coverage.warnings
 
     filtered_plan = plan_query(
         {
@@ -225,6 +238,44 @@ def test_plan_filters_refines_and_groups_matching_blocks(tmp_path):
         "first",
         "second",
     }
+    assert len(filtered_plan.coverage.groups) == 1
+
+
+def test_plan_reports_every_cell_missing_when_exact_grid_has_no_blocks(tmp_path):
+    selected = ContainerScheme(
+        name="capacity_2",
+        factor=2,
+        data_dir=tmp_path / "capacity_2",
+        metadata=tmp_path / "capacity_2" / "metadata.jsonl",
+        definitions=tmp_path / "capacity_2.json",
+    )
+    selected.metadata.parent.mkdir()
+    selected.metadata.write_text("")
+    settings = replace(
+        get_settings(),
+        container_schemes={"capacity_2": selected},
+        coarseness_to_spatial_level={2: selected},
+    )
+
+    plan = plan_query(
+        _query(
+            region={"west": 0, "east": 10, "south": 0, "north": 10},
+            time_start="2020-01-01",
+            time_end="2020-01-02",
+        ),
+        settings,
+    )
+
+    assert plan.coverage.groups == ()
+    assert plan.coverage.unmatched_miss_set == frozenset(
+        {
+            ("r1_c0", datetime(2020, 1, 1)),
+            ("r1_c0", datetime(2020, 1, 2)),
+        }
+    )
+    assert plan.coverage.warnings == (
+        "No matching blocks exist at the exact requested data grid.",
+    )
 
 
 def test_source_filters_and_dataset_parameters_are_validated():

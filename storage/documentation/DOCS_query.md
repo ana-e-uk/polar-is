@@ -44,6 +44,15 @@ variable, data grid, optional source constraints, and time overlap. Candidate
 blocks are then refined using their exact `block_summary` bounds and grouped by
 repository, dataset, variable, and additional parameters.
 
+Coverage is checked separately for every block group at the exact requested
+data grid. It is stored as sparse hit and miss sets whose entries are
+`(bucket_id, timestamp)`. A block marks timestamps from its inclusive
+`time_start` through `time_end`. For now, any block-summary envelope that
+overlaps the query counts as spatial coverage for that bucket; this does not
+yet verify individual coordinates inside the NetCDF block. Missing cells and
+the absence of exact-grid blocks produce warnings rather than resolution
+fallbacks.
+
 ## Example
 
 ```python
