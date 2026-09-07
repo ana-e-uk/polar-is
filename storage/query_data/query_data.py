@@ -11,6 +11,10 @@ import re
 from typing import Any, Mapping
 
 from polaris.config import ContainerScheme, Settings, get_settings
+from storage.manage.space_containers import (
+    container_definitions,
+    grid_for_scheme,
+)
 
 
 TIME_UNITS = ("Hour", "Day", "Month", "Year", "Source")
@@ -18,6 +22,12 @@ _TIME_PATTERN = re.compile(
     r"^(?P<year>\d{4})-(?P<month>\d{2})"
     r"(?:-(?P<day>\d{2})(?:[T ](?P<hour>\d{2}))?)?$"
 )
+_TIME_UNIT_TO_RESOLUTION = {
+    "Hour": "1H",
+    "Day": "1D",
+    "Month": "1MS",
+    "Year": "1YS",
+}
 
 
 @dataclass(frozen=True)
@@ -63,6 +73,20 @@ class QueryPlan:
     requested_data_grid: RequestedDataGrid
     spatial_level: ContainerScheme
     index_records: tuple[dict[str, Any], ...]
+    overlapping_bucket_ids: tuple[str, ...]
+    matching_blocks: tuple[dict[str, Any], ...]
+    block_groups: tuple[MatchingBlockGroup, ...]
+
+
+@dataclass(frozen=True)
+class MatchingBlockGroup:
+    """Blocks from one source and parameter combination."""
+
+    repository: str
+    dataset: str
+    variable: str
+    additional_parameters: dict[str, Any]
+    blocks: tuple[dict[str, Any], ...]
 
 
 def available_repositories(settings: Settings | None = None) -> tuple[str, ...]:
@@ -332,6 +356,143 @@ def read_spatial_level_index(
     return tuple(records)
 
 
+def _longitude_intervals(region: BoundingBox) -> tuple[tuple[float, float], ...]:
+    if region.west < region.east:
+        return ((region.west, region.east),)
+    if region.west > region.east:
+        return ((region.west, 360.0), (0.0, region.east))
+    return ((0.0, 360.0),)
+
+
+def _get_overlap_of_query_region_and_containers(
+    region: BoundingBox,
+    spatial_level: ContainerScheme,
+    settings: Settings | None = None,
+) -> tuple[str, ...]:
+    """Calculate bucket IDs whose fixed bounds overlap the query region."""
+    settings = settings or get_settings()
+    grid = grid_for_scheme(spatial_level, settings.container_grid)
+    definitions = container_definitions(grid)
+    longitude_intervals = _longitude_intervals(region)
+    overlapping = []
+    for bucket_id, definition in definitions.items():
+        bounds = definition["bounds"]
+        latitude_overlaps = (
+            bounds["lat_min"] <= region.north
+            and bounds["lat_max"] > region.south
+        )
+        longitude_overlaps = any(
+            bounds["lon_min"] <= east and bounds["lon_max"] > west
+            for west, east in longitude_intervals
+        )
+        if latitude_overlaps and longitude_overlaps:
+            overlapping.append(bucket_id)
+    return tuple(overlapping)
+
+
+def _record_matches_time_unit(record: Mapping[str, Any], time_unit: str) -> bool:
+    if time_unit == "Source":
+        return record.get("product_type") == "native"
+    return record.get("temporal_resolution") == _TIME_UNIT_TO_RESOLUTION[time_unit]
+
+
+def _record_overlaps_time(record: Mapping[str, Any], query: Query) -> bool:
+    try:
+        block_start = datetime.fromisoformat(record["time_start"])
+        block_end = datetime.fromisoformat(record["time_end"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return block_start <= query.time_end and block_end >= query.time_start
+
+
+def _filter_containers(
+    records: tuple[dict[str, Any], ...],
+    query: Query,
+    requested_data_grid: RequestedDataGrid,
+    overlapping_bucket_ids: tuple[str, ...],
+) -> tuple[dict[str, Any], ...]:
+    """Apply the combined metadata filter to one spatial-level index."""
+    bucket_ids = set(overlapping_bucket_ids)
+    matches = []
+    for record in records:
+        record_parameters = record.get("additional_parameters") or {}
+        matches_parameters = all(
+            record_parameters.get(name) == value
+            for name, value in query.additional_parameters.items()
+        )
+        if (
+            record.get("bucket_id") in bucket_ids
+            and record.get("variable") == query.variable
+            and record.get("coarseness_factor")
+            == requested_data_grid.coarseness_factor
+            and _record_matches_time_unit(record, requested_data_grid.time_unit)
+            and (
+                query.repository is None
+                or record.get("repository") == query.repository
+            )
+            and (query.dataset is None or record.get("dataset") == query.dataset)
+            and matches_parameters
+            and _record_overlaps_time(record, query)
+        ):
+            matches.append(record)
+    return tuple(matches)
+
+
+def _refine_spatial_overlap(
+    records: tuple[dict[str, Any], ...],
+    region: BoundingBox,
+) -> tuple[dict[str, Any], ...]:
+    """Remove blocks whose exact cell-center bounds miss the query region.
+
+    Assumes query region and blocks are rectangular bounding boxes.
+    """
+    longitude_intervals = _longitude_intervals(region)
+    matches = []
+    for record in records:
+        summary = record.get("block_summary") or {}
+        try:
+            latitude_overlaps = (
+                summary["lat_min"] <= region.north
+                and summary["lat_max"] >= region.south
+            )
+            longitude_overlaps = any(
+                summary["lon_min"] <= east and summary["lon_max"] >= west
+                for west, east in longitude_intervals
+            )
+        except (KeyError, TypeError):
+            continue
+        if latitude_overlaps and longitude_overlaps:
+            matches.append(record)
+    return tuple(matches)
+
+
+def _group_matching_blocks(
+    records: tuple[dict[str, Any], ...],
+) -> tuple[MatchingBlockGroup, ...]:
+    grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    parameters_by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for record in records:
+        parameters = record.get("additional_parameters") or {}
+        key = (
+            record["repository"],
+            record["dataset"],
+            record["variable"],
+            json.dumps(parameters, sort_keys=True, separators=(",", ":")),
+        )
+        grouped.setdefault(key, []).append(record)
+        parameters_by_key.setdefault(key, dict(parameters))
+    return tuple(
+        MatchingBlockGroup(
+            repository=key[0],
+            dataset=key[1],
+            variable=key[2],
+            additional_parameters=parameters_by_key[key],
+            blocks=tuple(blocks),
+        )
+        for key, blocks in grouped.items()
+    )
+
+
 def plan_query(
     query: Query | Mapping[str, Any],
     settings: Settings | None = None,
@@ -343,29 +504,36 @@ def plan_query(
     )
     requested_data_grid = determine_requested_data_grid(normalized_query)
     spatial_level = map_grid_to_spatial_level(requested_data_grid, settings)
+    index_records = read_spatial_level_index(spatial_level)
+    overlapping_bucket_ids = _get_overlap_of_query_region_and_containers(
+        normalized_query.region,
+        spatial_level,
+        settings,
+    )
+    matching_blocks = _filter_containers(
+        index_records,
+        normalized_query,
+        requested_data_grid,
+        overlapping_bucket_ids,
+    )
+    matching_blocks = _refine_spatial_overlap(
+        matching_blocks,
+        normalized_query.region,
+    )
     return QueryPlan(
         query=normalized_query,
         requested_data_grid=requested_data_grid,
         spatial_level=spatial_level,
-        index_records=read_spatial_level_index(spatial_level),
+        index_records=index_records,
+        overlapping_bucket_ids=overlapping_bucket_ids,
+        matching_blocks=matching_blocks,
+        block_groups=_group_matching_blocks(matching_blocks),
     )
 
 
 def _found_missing_data(missing: dict) -> bool:
     '''Generates API message about missing data. 
     Asks user if it should be downloaded and returns answer.'''
-
-def _get_overlap_of_query_region_and_containers():
-    '''Return all containers that the query region overlaps.'''
-    #  maybe: use storage.ingest_data.make_data_blocks.block_bounds_and_extrema
-
-def _filter_containers():
-    '''Filter container by their metadata by other query parameters:
-        time resolution, repo, dataset, and variable, time range, additional parameters
-    '''
-
-def _refine_spatial_overlap():
-    '''Filter out containers that do not overlap query region at any point.'''
 
 def _check_coverage_time_range():
     '''Check if the local data covers the time range of the query.

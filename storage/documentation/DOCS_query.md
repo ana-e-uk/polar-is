@@ -11,7 +11,8 @@ to identify the repository or dataset that supplies the data.
 - `region`: a bounding box with `west`, `east`, `south`, and `north`. Values are
   entered with longitudes from -180 to 180 and rounded to three decimal places.
   Normalized query longitudes use the storage convention from 0 to 360. An
-  internal `west` greater than `east` therefore wraps through 360/0.
+  internal `west` greater than `east` therefore wraps through 360/0. The conversion
+  and block overlap calculation is described in the **Longitude overlap** section below.
 - `time_start` and `time_end`: `YYYY-MM`, `YYYY-MM-DD`, or `YYYY-MM-DDTHH`.
   Missing start components use the beginning of the selected period; missing
   end components use its end. Minutes and finer units are not accepted.
@@ -38,7 +39,10 @@ filter, variables are the union of the canonical variables from every dataset.
 The requested data grid is `(coarseness_factor, time_unit)`. The planner maps
 the coarseness factor through `coarseness_to_spatial_level`, then reads only
 that spatial level's configured `metadata.jsonl` index. Later planning steps
-filter those index records into block candidates.
+calculate overlapping bucket IDs and apply one combined filter for bucket,
+variable, data grid, optional source constraints, and time overlap. Candidate
+blocks are then refined using their exact `block_summary` bounds and grouped by
+repository, dataset, variable, and additional parameters.
 
 ## Example
 
@@ -54,3 +58,87 @@ filter those index records into block candidates.
     "aggregation_method": "mean",
 }
 ```
+
+### Longitude overlap
+
+The accepted longitude range is `[-180, 180]`:
+
+```text
+180°W       0°       180°E
+ -180       0         180
+```
+
+`-180` and `180` are the same meridian. In the storage convention:
+
+```text
+0°          180°          360°
+0            180            0
+```
+
+Negative longitudes are converted by adding 360:
+
+```text
+-180 → 180
+ -70 → 290
+ -20 → 340
+   0 →   0
+  30 →  30
+ 180 → 180
+```
+
+For example, consider a user query from 70°W to 30°E:
+
+```python
+west = -70
+east = 30
+```
+
+After normalization:
+
+```python
+west = 290
+east = 30
+```
+
+Because `290 > 30`, `_longitude_intervals()` splits it at the storage boundary:
+
+```python
+((290, 360), (0, 30))
+```
+
+Visually:
+
+```text
+Storage:  0────────30              290────────360
+Query:    [included]               [included]
+```
+
+For `capacity_2`, the longitude buckets are:
+
+```text
+r*_c0:   0–120
+r*_c1: 120–240
+r*_c2: 240–360
+```
+
+Therefore, that query overlaps columns `c0` and `c2`, but not `c1`.
+
+A query entirely within one side does not need splitting.
+
+The special full-world input:
+
+```python
+west = -180
+east = 180
+```
+
+becomes:
+
+```python
+west = 180
+east = 180
+```
+
+The original validator prohibits a zero-width box, so this equality can only represent the complete 360-degree span. `_longitude_intervals()` therefore returns `(0, 360)`.
+
+One current limitation is that a small user-entered box crossing the ±180° meridian, such as `west=170, east=-170`, is rejected because the input requires `west < east`.

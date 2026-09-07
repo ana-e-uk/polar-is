@@ -1,5 +1,5 @@
-from datetime import datetime
 from dataclasses import replace
+from datetime import datetime
 import json
 
 import pytest
@@ -107,6 +107,124 @@ def test_plan_reads_only_the_requested_spatial_level(tmp_path):
     assert plan.requested_data_grid == RequestedDataGrid(2, "Day")
     assert plan.spatial_level is selected
     assert plan.index_records == tuple(records)
+
+
+def test_plan_filters_refines_and_groups_matching_blocks(tmp_path):
+    selected = ContainerScheme(
+        name="capacity_2",
+        factor=2,
+        data_dir=tmp_path / "capacity_2",
+        metadata=tmp_path / "capacity_2" / "metadata.jsonl",
+        definitions=tmp_path / "capacity_2.json",
+    )
+    selected.metadata.parent.mkdir()
+
+    def record(block_id, **changes):
+        value = {
+            "repository": "copernicusclimatedatastore",
+            "dataset": "carra_height",
+            "variable": "sea_surface_temperature",
+            "additional_parameters": {"height": "15m"},
+            "bucket_id": "r1_c2",
+            "coarseness_factor": 2,
+            "temporal_resolution": "1D",
+            "product_type": "aggregate",
+            "time_start": "2020-01-01T00:00:00",
+            "time_end": "2020-01-31T00:00:00",
+            "block_summary": {
+                "lon_min": 300.0,
+                "lon_max": 310.0,
+                "lat_min": 20.0,
+                "lat_max": 25.0,
+            },
+            "block_id": block_id,
+        }
+        value.update(changes)
+        return value
+
+    records = [
+        record("first"),
+        record(
+            "second",
+            bucket_id="r2_c0",
+            block_summary={
+                "lon_min": 10.0,
+                "lon_max": 20.0,
+                "lat_min": 50.0,
+                "lat_max": 60.0,
+            },
+        ),
+        record("other-parameters", additional_parameters={"height": "30m"}),
+        record(
+            "other-source",
+            repository="noaancei",
+            dataset="emsst",
+            additional_parameters={},
+        ),
+        record(
+            "outside-exact-region",
+            block_summary={
+                "lon_min": 250.0,
+                "lon_max": 260.0,
+                "lat_min": 20.0,
+                "lat_max": 25.0,
+            },
+        ),
+        record("wrong-bucket", bucket_id="r1_c1"),
+        record("wrong-variable", variable="air_temperature"),
+        record("wrong-coarseness", coarseness_factor=4),
+        record("wrong-time-unit", temporal_resolution="1MS"),
+        record("wrong-time", time_start="2019-01-01", time_end="2019-01-31"),
+    ]
+    selected.metadata.write_text(
+        "\n".join(json.dumps(item) for item in records) + "\n"
+    )
+    settings = replace(
+        get_settings(),
+        container_schemes={"capacity_2": selected},
+        coarseness_to_spatial_level={2: selected},
+    )
+    query = _query(
+        region={"west": -70, "east": 30, "south": 10, "north": 80},
+        time_start="2020-01",
+        time_end="2020-01",
+    )
+
+    plan = plan_query(query, settings)
+
+    assert plan.overlapping_bucket_ids == (
+        "r1_c0",
+        "r1_c2",
+        "r2_c0",
+        "r2_c2",
+    )
+    assert {item["block_id"] for item in plan.matching_blocks} == {
+        "first",
+        "second",
+        "other-parameters",
+        "other-source",
+    }
+    assert len(plan.block_groups) == 3
+    assert {
+        (group.repository, group.dataset) for group in plan.block_groups
+    } == {
+        ("copernicusclimatedatastore", "carra_height"),
+        ("noaancei", "emsst"),
+    }
+
+    filtered_plan = plan_query(
+        {
+            **query,
+            "repository": "copernicusclimatedatastore",
+            "dataset": "carra_height",
+            "additional_parameters": {"height": "15m"},
+        },
+        settings,
+    )
+    assert {item["block_id"] for item in filtered_plan.matching_blocks} == {
+        "first",
+        "second",
+    }
 
 
 def test_source_filters_and_dataset_parameters_are_validated():
