@@ -22,6 +22,7 @@ class Settings:
     _initialize: Path
     _downloaded: Path
     _standardized: Path
+    _query_results: Path
     # files
     interests_: Path
     requests_: Path
@@ -64,6 +65,7 @@ def get_settings() -> Settings:
         _initialize=PROJECT_ROOT / raw["initialize_dir"],
         _downloaded=PROJECT_ROOT / raw["downloaded_data_dir"],
         _standardized=PROJECT_ROOT / raw["standardized_data_dir"],
+        _query_results=PROJECT_ROOT / raw["query_results_dir"],
         interests_=PROJECT_ROOT / raw["interests"],
         requests_=PROJECT_ROOT / raw["requests"],
         downloaded_data_=PROJECT_ROOT / raw["downloaded_data"],

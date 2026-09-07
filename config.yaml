@@ -2,6 +2,7 @@
 initialize_dir: storage/initialize/
 downloaded_data_dir: storage/data/tmp/downloaded/
 standardized_data_dir: storage/data/tmp/standardized/
+query_results_dir: storage/data/tmp/query_results/
 
 
 ############ direct file paths ###########
