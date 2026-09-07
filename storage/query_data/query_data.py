@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import math
 from pathlib import Path
@@ -66,19 +66,6 @@ class RequestedDataGrid:
 
 
 @dataclass(frozen=True)
-class QueryPlan:
-    """The initial plan before index records are filtered."""
-
-    query: Query
-    requested_data_grid: RequestedDataGrid
-    spatial_level: ContainerScheme
-    index_records: tuple[dict[str, Any], ...]
-    overlapping_bucket_ids: tuple[str, ...]
-    matching_blocks: tuple[dict[str, Any], ...]
-    block_groups: tuple[MatchingBlockGroup, ...]
-
-
-@dataclass(frozen=True)
 class MatchingBlockGroup:
     """Blocks from one source and parameter combination."""
 
@@ -87,6 +74,42 @@ class MatchingBlockGroup:
     variable: str
     additional_parameters: dict[str, Any]
     blocks: tuple[dict[str, Any], ...]
+
+
+CoverageCell = tuple[str, datetime]
+
+
+@dataclass(frozen=True)
+class BlockGroupCoverage:
+    """Spatio-temporal coverage for one matching block group."""
+
+    group: MatchingBlockGroup
+    hit_set: frozenset[CoverageCell]
+    miss_set: frozenset[CoverageCell]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CoverageResult:
+    """Coverage results for all block groups at the exact requested grid."""
+
+    groups: tuple[BlockGroupCoverage, ...]
+    unmatched_miss_set: frozenset[CoverageCell]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class QueryPlan:
+    """Selected and grouped blocks plus their coverage at the requested grid."""
+
+    query: Query
+    requested_data_grid: RequestedDataGrid
+    spatial_level: ContainerScheme
+    index_records: tuple[dict[str, Any], ...]
+    overlapping_bucket_ids: tuple[str, ...]
+    matching_blocks: tuple[dict[str, Any], ...]
+    block_groups: tuple[MatchingBlockGroup, ...]
+    coverage: CoverageResult
 
 
 def available_repositories(settings: Settings | None = None) -> tuple[str, ...]:
@@ -493,6 +516,150 @@ def _group_matching_blocks(
     )
 
 
+def _first_time_label(start: datetime, resolution: str) -> datetime:
+    if resolution in {"1H", "3H", "1D"}:
+        hours = {"1H": 1, "3H": 3, "1D": 24}[resolution]
+        step = timedelta(hours=hours)
+        origin = datetime(1970, 1, 1)
+        step_count = math.ceil((start - origin) / step)
+        return origin + step_count * step
+    if resolution == "1MS":
+        label = datetime(start.year, start.month, 1)
+        return label if label >= start else _next_time_label(label, resolution)
+    if resolution == "1YS":
+        label = datetime(start.year, 1, 1)
+        return label if label >= start else datetime(start.year + 1, 1, 1)
+    raise ValueError(f"Unsupported coverage resolution: {resolution!r}")
+
+
+def _next_time_label(timestamp: datetime, resolution: str) -> datetime:
+    if resolution in {"1H", "3H", "1D"}:
+        hours = {"1H": 1, "3H": 3, "1D": 24}[resolution]
+        return timestamp + timedelta(hours=hours)
+    if resolution == "1MS":
+        if timestamp.month == 12:
+            return datetime(timestamp.year + 1, 1, 1)
+        return datetime(timestamp.year, timestamp.month + 1, 1)
+    if resolution == "1YS":
+        return datetime(timestamp.year + 1, 1, 1)
+    raise ValueError(f"Unsupported coverage resolution: {resolution!r}")
+
+
+def _expected_timestamps(
+    query: Query,
+    resolution: str,
+) -> tuple[datetime, ...]:
+    timestamp = _first_time_label(query.time_start, resolution)
+    timestamps = []
+    while timestamp <= query.time_end:
+        timestamps.append(timestamp)
+        timestamp = _next_time_label(timestamp, resolution)
+    return tuple(timestamps)
+
+
+def _coverage_resolution(
+    requested_data_grid: RequestedDataGrid,
+    group: MatchingBlockGroup,
+) -> str | None:
+    if requested_data_grid.time_unit != "Source":
+        return _TIME_UNIT_TO_RESOLUTION[requested_data_grid.time_unit]
+    resolutions = {
+        record.get("temporal_resolution") for record in group.blocks
+    }
+    return resolutions.pop() if len(resolutions) == 1 else None
+
+
+def _coverage_group_name(group: MatchingBlockGroup) -> str:
+    parameters = json.dumps(
+        group.additional_parameters,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"{group.repository}/{group.dataset}/{group.variable}/{parameters}"
+
+
+def check_spatiotemporal_coverage(
+    query: Query,
+    requested_data_grid: RequestedDataGrid,
+    overlapping_bucket_ids: tuple[str, ...],
+    block_groups: tuple[MatchingBlockGroup, ...],
+) -> CoverageResult:
+    """Create sparse hit and miss sets at the exact requested data grid."""
+    if not block_groups:
+        warning = "No matching data blocks exist at the exact requested data grid. Try coarser spatial and/or temporal resolutions."
+        unmatched_misses: frozenset[CoverageCell] = frozenset()
+        if requested_data_grid.time_unit != "Source":
+            resolution = _TIME_UNIT_TO_RESOLUTION[requested_data_grid.time_unit]
+            timestamps = _expected_timestamps(query, resolution)
+            unmatched_misses = frozenset(
+                (bucket_id, timestamp)
+                for bucket_id in overlapping_bucket_ids
+                for timestamp in timestamps
+            )
+        return CoverageResult((), unmatched_misses, (warning,))
+
+    coverage_groups = []
+    warnings = []
+    for group in block_groups:
+        resolution = _coverage_resolution(requested_data_grid, group)
+        if resolution is None:
+            warning = (
+                f"Cannot check coverage for {_coverage_group_name(group)} "
+                "because it has multiple native time resolutions."
+            )
+            coverage_groups.append(
+                BlockGroupCoverage(group, frozenset(), frozenset(), (warning,))
+            )
+            warnings.append(warning)
+            continue
+
+        try:
+            timestamps = _expected_timestamps(query, resolution)
+        except ValueError:
+            warning = (
+                f"Cannot check coverage for {_coverage_group_name(group)} "
+                f"at unsupported resolution {resolution!r}."
+            )
+            coverage_groups.append(
+                BlockGroupCoverage(group, frozenset(), frozenset(), (warning,))
+            )
+            warnings.append(warning)
+            continue
+
+        expected = frozenset(
+            (bucket_id, timestamp)
+            for bucket_id in overlapping_bucket_ids
+            for timestamp in timestamps
+        )
+        hits = set()
+        for block in group.blocks:
+            try:
+                block_start = datetime.fromisoformat(block["time_start"])
+                block_end = datetime.fromisoformat(block["time_end"])
+                bucket_id = block["bucket_id"]
+            except (KeyError, TypeError, ValueError):
+                continue
+            hits.update(
+                (bucket_id, timestamp)
+                for timestamp in timestamps
+                if block_start <= timestamp <= block_end
+            )
+        hit_set = frozenset(hits) & expected
+        miss_set = expected - hit_set
+        group_warnings = ()
+        if miss_set:
+            warning = (
+                f"{_coverage_group_name(group)} is missing {len(miss_set)} "
+                f"of {len(expected)} bucket/time cells at the exact requested grid."
+            )
+            group_warnings = (warning,)
+            warnings.append(warning)
+        coverage_groups.append(
+            BlockGroupCoverage(group, hit_set, miss_set, group_warnings)
+        )
+    return CoverageResult(tuple(coverage_groups), frozenset(), tuple(warnings))
+
+
 def plan_query(
     query: Query | Mapping[str, Any],
     settings: Settings | None = None,
@@ -520,6 +687,13 @@ def plan_query(
         matching_blocks,
         normalized_query.region,
     )
+    block_groups = _group_matching_blocks(matching_blocks)
+    coverage = check_spatiotemporal_coverage(
+        normalized_query,
+        requested_data_grid,
+        overlapping_bucket_ids,
+        block_groups,
+    )
     return QueryPlan(
         query=normalized_query,
         requested_data_grid=requested_data_grid,
@@ -527,23 +701,14 @@ def plan_query(
         index_records=index_records,
         overlapping_bucket_ids=overlapping_bucket_ids,
         matching_blocks=matching_blocks,
-        block_groups=_group_matching_blocks(matching_blocks),
+        block_groups=block_groups,
+        coverage=coverage,
     )
 
 
 def _found_missing_data(missing: dict) -> bool:
     '''Generates API message about missing data. 
     Asks user if it should be downloaded and returns answer.'''
-
-def _check_coverage_time_range():
-    '''Check if the local data covers the time range of the query.
-    If not, return missing range(s) to call found_missing_data()
-    '''
-
-def _check_coverage_space_range():
-    '''Check if the local data covers the spatial region of the query.
-    If not, return missing range(s) to call found_missing_data()
-    '''
 
 def _find_coarser_data(space_res: float, temp_res: str):
     '''Check if any coarser version of the data exists.'''
