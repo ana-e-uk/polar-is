@@ -22,6 +22,8 @@ to identify the repository or dataset that supplies the data.
 - `function`: an entry in `supported_query_functions` in `config.yaml`.
 - `aggregation_method`: an entry in `function_aggregation_methods` in
   `config.yaml`.
+- `predicate` and `filter_value`: required for `find-time` and `find-area`.
+  Predicates are normalized to `lt`, `le`, `eq`, `ne`, `ge`, or `gt`.
 
 ## Optional filters
 
@@ -52,6 +54,26 @@ overlaps the query counts as spatial coverage for that bucket; this does not
 yet verify individual coordinates inside the NetCDF block. Missing cells and
 the absence of exact-grid blocks produce warnings rather than resolution
 fallbacks.
+
+## Execution and results
+
+The executor derives each selected block path from its spatial level,
+`bucket_id`, and `block_id`. It slices time, masks the bounding box, and uses
+`spatially_crop_block()` before loading the selected cells. Native blocks are
+given the same aggregate statistics as pre-aggregated blocks when they are
+opened.
+
+Because stored curvilinear blocks do not retain global x/y indexes, cropped
+blocks are combined using `timestamp` and a one-dimensional `cell` coordinate.
+Latitude, longitude, bucket ID, and a stable coordinate-based cell ID remain
+attached to every cell.
+
+Each discovered block group produces a separate NetCDF file under
+`storage/data/tmp/query_results/{query_id}/{function}/`. The returned
+`QueryResult` also contains the in-memory Xarray datasets, source information,
+units, block IDs, miss sets, and warnings. Mean results combine retained
+statistics as `sum(weighted_sum) / sum(weight_sum)`; minimum and maximum use
+the retained extrema.
 
 ## Example
 

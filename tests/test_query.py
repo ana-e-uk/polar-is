@@ -7,7 +7,6 @@ import pytest
 from polaris.config import ContainerScheme, get_settings
 from storage.query_data.query_data import (
     BoundingBox,
-    QueryStorage,
     RequestedDataGrid,
     available_additional_parameters,
     available_datasets,
@@ -63,12 +62,18 @@ def test_query_longitudes_match_the_storage_convention():
     assert result.region == BoundingBox(180.0, 340.0, -10.0, 10.0)
 
 
-def test_query_storage_uses_the_normalized_query():
-    storage = QueryStorage([], _query())
+def test_find_query_normalizes_its_predicate_and_filter_value():
+    result = normalize_query(
+        _query(function="find-time", predicate=">", filter_value="10.5")
+    )
 
-    assert storage.query.variable == "sea_surface_temperature"
-    assert storage.query.coarseness_factor == 2
-    assert storage.files_for_func_list == []
+    assert result.predicate == "gt"
+    assert result.filter_value == 10.5
+
+
+def test_find_query_requires_predicate_and_filter_value():
+    with pytest.raises(ValueError, match="require a supported predicate"):
+        normalize_query(_query(function="find-area"))
 
 
 def test_plan_reads_only_the_requested_spatial_level(tmp_path):
@@ -274,7 +279,8 @@ def test_plan_reports_every_cell_missing_when_exact_grid_has_no_blocks(tmp_path)
         }
     )
     assert plan.coverage.warnings == (
-        "No matching blocks exist at the exact requested data grid.",
+        "No matching data blocks exist at the exact requested data grid. "
+        "Try coarser spatial and/or temporal resolutions.",
     )
 
 
