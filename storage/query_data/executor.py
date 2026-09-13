@@ -150,7 +150,7 @@ def _block_to_cells(
     )
     for name in names:
         cells[name] = cells[name].transpose("timestamp", "cell")
-    return cells.load()
+    return cells.sortby("cell").load()
 
 
 def _get_data(
@@ -183,12 +183,18 @@ def _get_data(
     if not blocks:
         return None, tuple(used_records), tuple(warnings)
 
-    combined = xr.combine_by_coords(
+    combined = xr.concat(
         blocks,
+        dim="cell",
+        join="outer",
         combine_attrs="override",
         data_vars="all",
         coords="minimal",
-    ).sortby("timestamp")
+        compat="override",
+    )
+    if combined.get_index("cell").has_duplicates:
+        combined = combined.groupby("cell").first(skipna=True)
+    combined = combined.sortby(["timestamp", "cell"])
     timestamps = combined.get_index("timestamp")
     combined = combined.isel(timestamp=~timestamps.duplicated())
     cell_ids = combined["cell"].values.astype(str)
