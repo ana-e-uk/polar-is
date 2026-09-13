@@ -115,6 +115,26 @@ def test_executor_writes_get_data_with_coordinates_and_source(tmp_path):
     assert group.miss_set == frozenset()
 
 
+def test_executor_combines_spatial_blocks_with_interleaved_cell_ids(tmp_path):
+    settings = _settings(tmp_path)
+    scheme = settings.coarseness_to_spatial_level[1]
+    middle = _write_block(
+        scheme,
+        "middle",
+        "r3_c0",
+        30.0,
+        [5.0, 6.0],
+        2.0,
+    )
+    with scheme.metadata.open("a") as metadata:
+        metadata.write(json.dumps(middle) + "\n")
+
+    data = execute_query(_query("get-data"), settings).groups[0].data
+
+    assert data.sizes == {"timestamp": 2, "cell": 3}
+    assert set(data["longitude"].values) == {10.0, 30.0, 70.0}
+
+
 def test_executor_computes_all_four_derived_functions(tmp_path):
     settings = _settings(tmp_path)
 

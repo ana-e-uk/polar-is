@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polar-is"
+version = "0.1.0"
+description = "Spatio-temporal environmental data storage and query tools"
+requires-python = ">=3.12"
+dependencies = [
+  "dask[array]>=2025.1,<2027",
+  "fastapi>=0.116,<1",
+  "h5py>=3.11,<4",
+  "h5netcdf>=1.6,<2",
+  "numpy>=2,<3",
+  "pandas>=2.2,<4",
+  "PyYAML>=6,<7",
+  "uvicorn[standard]>=0.35,<1",
+  "xarray>=2025.1,<2027",
+]
+
+[project.optional-dependencies]
+test = [
+  "httpx>=0.28,<1",
+  "pytest>=8,<10",
+]
+
+[tool.setuptools.packages.find]
+include = ["api*", "polaris*", "storage*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

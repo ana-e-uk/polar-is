@@ -20,6 +20,9 @@ The section on the left is initially a map of the world that is an option for us
 ## Default settings
 When a session of the web interface is started, all the plots and main parameters will be blank, but the default plot types will be: heatmap for the top left-hand, timeseries for the top right-hand column, statistics for the middle right-hand column, and statistics for the bottom right-hand column with different subparameters selected.
 
+## Human facing names for parameters
+For each variable, repository, and dataset, we can define a human facing name that appears as an option on the interface rather than the technical dataset name. For example, `sea_surface_temperature` would be given the name **Sea Surface Temperature**. Additionally, the units and descriptions for each variable are available as a popup when an (i) button is clicked
+
 # Interface v.1
 
 This is what the interface will support initially.
@@ -47,7 +50,7 @@ The main paremeters controlling the *data object* queried from storage are in th
 * the region: the bounding box of the spatial region the data should cover. User is required to specify min/max lat/lon. The region can be specified by drawing a rectangle on the map in the left-hand section of the interface, or using the North, South, East, West textbox-like inputs.
 *  the time interval: the continuous time interval the data should cover at the specified time resolution. User is required to specify start and end of time interval. The start/end specifies the year, month, day, and optionally hour.
 * the coarseness factor: the spatial resolution of the data to use. Currently, can offer source (native) spatial resolution, coarsen-2, and coarsen-4 (coarsen-2 and coarsen-4 are the result of the two spatial aggregations/coarsenings). User is required to specify the coarseness factor. The default is coarsen-4.
-* the time unit: the temporal resolution of the data to use. Currently, can offer source temporal resolution and all resolutions (coarser than the dataset source resolution) of Hour, Day, Month, Year. User is required to specify the time unit. The default is the coarsest time unit available for the specified dataset/variable.
+* the time unit: the temporal resolution of the data to use. Currently, can offer source temporal resolution and all resolutions (coarser than the dataset source resolution) of Hour, Day, Month, Year. User is required to specify the time unit. The default is the coarsest time unit available for the specified dataset/variable. The options are limited by what is available for a specific variable.
 * the aggregation method - the way the data is aggregated by for a function. Currently, offer mean, max, min. The user must choose between these.
 * the function: the result to return. Currently offer timeseries, heatmap, find-area, find-time. User is required to choose one function.
     * If a filtering function is chosen: find-area or find-time, then the following additional parameters are also required by the query: predicate and filter value.
@@ -67,3 +70,6 @@ This section is initially a map of the world that users can use to define the sp
 
 ## Default settings
 When a session of the web interface is initialized, all the plots and main parameters will be blank.
+
+## Human facing names for parameters
+For each variable, repository, and dataset, we can define a human facing name that appears as an option on the interface rather than the technical dataset name. For example, `sea_surface_temperature` is given the name **Sea Surface Temperature**.
