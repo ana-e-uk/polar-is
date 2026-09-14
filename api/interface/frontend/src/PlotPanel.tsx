@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Data, Layout } from "plotly.js";
+import { loadCoastlines } from "./geoTopology";
 import type { QueryResult, ResultGroup } from "./types";
 
 type Props = { result: QueryResult | null; loading: boolean };
@@ -9,7 +10,41 @@ const sourceName = (group: ResultGroup) => {
   return `${group.source.dataset}${details ? ` · ${details}` : ""}`;
 };
 
-function areaTrace(group: ResultGroup): Data[] {
+const VIRIDIS = [
+  "#440154",
+  "#482878",
+  "#3e4989",
+  "#31688e",
+  "#26828e",
+  "#1f9e89",
+  "#35b779",
+  "#6ece58",
+  "#b5de2b",
+  "#fde725",
+];
+
+function interpolateColor(first: string, second: string, amount: number): string {
+  const channel = (color: string, offset: number) => Number.parseInt(color.slice(offset, offset + 2), 16);
+  const value = (offset: number) => Math.round(
+    channel(first, offset) + (channel(second, offset) - channel(first, offset)) * amount,
+  );
+  return `rgb(${value(1)}, ${value(3)}, ${value(5)})`;
+}
+
+function viridisColor(value: number, minimum: number, maximum: number): string {
+  if (maximum <= minimum) return interpolateColor(VIRIDIS[0], VIRIDIS[1], 0.5);
+  const normalized = Math.max(0, Math.min(1, (value - minimum) / (maximum - minimum)));
+  const position = normalized * (VIRIDIS.length - 1);
+  const lower = Math.min(Math.floor(position), VIRIDIS.length - 2);
+  return interpolateColor(VIRIDIS[lower], VIRIDIS[lower + 1], position - lower);
+}
+
+function areaTrace(
+  group: ResultGroup,
+  showScale: boolean,
+  zmin: number,
+  zmax: number,
+): Data[] {
   const data = group.data;
   if (data.kind !== "heatmap" && data.kind !== "find-area") return [];
   const cells = data.values.flatMap((value, index) => {
@@ -27,46 +62,80 @@ function areaTrace(group: ResultGroup): Data[] {
       matches: data.matches?.[index] ?? false,
       latitudes: latitudes as number[],
       longitudes: longitudes as number[],
-      feature: {
-        type: "Feature",
-        properties: { id },
-        geometry: {
-          type: "Polygon",
-          coordinates: [[
-            ...(longitudes as number[]).map((item, corner) => [item, (latitudes as number[])[corner]]),
-            [(longitudes as number[])[0], (latitudes as number[])[0]],
-          ]],
-        },
-      },
+      latitude,
+      longitude,
     }];
   });
   if (!cells.length) return [];
-  const traces: Data[] = [{
-    type: "choropleth",
-    name: sourceName(group),
-    geojson: { type: "FeatureCollection", features: cells.map((cell) => cell.feature) },
-    featureidkey: "properties.id",
-    locations: cells.map((cell) => cell.id),
-    z: cells.map((cell) => cell.value),
+
+  // Matplotlib's working notebook uses a PolyCollection whose face color is
+  // calculated from each value. Do the same here instead of relying on
+  // Plotly's GeoJSON location-to-z join, which can render every feature with
+  // one color even though its hover z values differ.
+  const traces: Data[] = cells.map((cell) => {
+    const color = viridisColor(cell.value, zmin, zmax);
+    return {
+      type: "scatter",
+      mode: "lines",
+      x: [...cell.longitudes, cell.longitudes[0]],
+      y: [...cell.latitudes, cell.latitudes[0]],
+      fill: "toself",
+      fillcolor: color,
+      connectgaps: false,
+      line: { color: "rgba(255,255,255,0.25)", width: 0.25 },
+      hoverinfo: "skip",
+      showlegend: false,
+    } as Data;
+  });
+
+  // Invisible center markers preserve exact per-cell hover labels and values.
+  traces.push({
+    type: "scatter",
+    mode: "markers",
+    x: cells.map((cell) => cell.longitude),
+    y: cells.map((cell) => cell.latitude),
     text: cells.map((cell) => cell.label),
-    hovertemplate: `%{text}<br>%{z} ${group.units ?? ""}<extra>${sourceName(group)}</extra>`,
-    coloraxis: "coloraxis",
-    showscale: false,
-    marker: { line: { width: 0.25, color: "rgba(255,255,255,.35)" } },
-  } as Data];
+    customdata: cells.map((cell) => cell.value),
+    name: sourceName(group),
+    marker: { size: 12, color: "rgba(255,255,255,0.001)" },
+    hovertemplate: `%{text}<br>%{customdata} ${group.units ?? ""}<extra>${sourceName(group)}</extra>`,
+    showlegend: false,
+  } as Data);
+
+  // A zero-size numeric marker supplies the continuous colorbar for the
+  // directly colored polygon bins.
+  traces.push({
+    type: "scatter",
+    mode: "markers",
+    x: [cells[0].longitude, cells[0].longitude],
+    y: [cells[0].latitude, cells[0].latitude],
+    marker: {
+      size: 0,
+      opacity: 0,
+      color: [zmin, zmax],
+      autocolorscale: false,
+      colorscale: "Viridis",
+      cmin: zmin,
+      cmax: zmax === zmin ? zmin + 1 : zmax,
+      showscale: showScale,
+      colorbar: { title: { text: group.units ?? "Value" } },
+    },
+    hoverinfo: "skip",
+    showlegend: false,
+  } as Data);
   const matches = cells.filter((cell) => cell.matches);
   if (data.kind === "find-area" && matches.length) {
-    const lat: Array<number | null> = [];
-    const lon: Array<number | null> = [];
+    const latitudes: Array<number | null> = [];
+    const longitudes: Array<number | null> = [];
     matches.forEach((cell) => {
-      lat.push(...cell.latitudes, cell.latitudes[0], null);
-      lon.push(...cell.longitudes, cell.longitudes[0], null);
+      latitudes.push(...cell.latitudes, cell.latitudes[0], null);
+      longitudes.push(...cell.longitudes, cell.longitudes[0], null);
     });
     traces.push({
-      type: "scattergeo",
+      type: "scatter",
       mode: "lines",
-      lat,
-      lon,
+      x: longitudes,
+      y: latitudes,
       name: "Matches filter",
       hoverinfo: "skip",
       line: { color: "#dc2626", width: 2.5 },
@@ -93,6 +162,17 @@ export default function PlotPanel({ result, loading }: Props) {
       ([minimum, maximum], value) => [Math.min(minimum, value), Math.max(maximum, value)],
       areaValues.length ? [areaValues[0], areaValues[0]] : [0, 1],
     );
+    const areaLongitudes = groups.flatMap((group) => {
+      const data = group.data;
+      if (data.kind !== "heatmap" && data.kind !== "find-area") return [];
+      return data.corner_longitudes.flat().filter((value): value is number => value !== null);
+    });
+    const areaLatitudes = groups.flatMap((group) => {
+      const data = group.data;
+      if (data.kind !== "heatmap" && data.kind !== "find-area") return [];
+      return data.corner_latitudes.flat().filter((value): value is number => value !== null);
+    });
+    let areaGroupIndex = 0;
     const traces: Data[] = groups.flatMap((group) => {
       const data = group.data;
       if (data.kind === "timeseries" || data.kind === "find-time") {
@@ -109,7 +189,9 @@ export default function PlotPanel({ result, loading }: Props) {
         }
         return timeTraces;
       }
-      return areaTrace(group);
+      const groupTraces = areaTrace(group, areaGroupIndex === 0, zmin, zmax);
+      areaGroupIndex += 1;
+      return groupTraces;
     });
     const isArea = groups[0].data.kind === "heatmap" || groups[0].data.kind === "find-area";
     const layout: Partial<Layout> = {
@@ -119,31 +201,23 @@ export default function PlotPanel({ result, loading }: Props) {
       plot_bgcolor: "#f7fafc",
       font: { family: "Inter, ui-sans-serif, system-ui", color: "#17324d", size: 13 },
       legend: { orientation: "h", y: -0.2 },
-      xaxis: { title: { text: "Time" }, gridcolor: "#dbe6ef" },
-      yaxis: { title: { text: groups[0].units ?? "Value" }, gridcolor: "#dbe6ef" },
-      geo: isArea ? {
-        projection: { type: "equirectangular" },
-        showland: true,
-        landcolor: "#e7eef2",
-        showocean: true,
-        oceancolor: "#f3f8fa",
-        showcoastlines: true,
-        coastlinecolor: "#506878",
-        showcountries: true,
-        countrycolor: "#8194a1",
-        fitbounds: "locations",
-        lonaxis: { showgrid: true, gridcolor: "#b8c8d3", dtick: 10 },
-        lataxis: { showgrid: true, gridcolor: "#b8c8d3", dtick: 10 },
-      } : undefined,
+      xaxis: isArea ? {
+        title: { text: "Longitude" },
+        gridcolor: "#b8c8d3",
+        showline: true,
+        mirror: true,
+        ticks: "outside",
+        range: areaLongitudes.length ? [Math.min(...areaLongitudes), Math.max(...areaLongitudes)] : undefined,
+      } : { title: { text: "Time" }, gridcolor: "#dbe6ef" },
+      yaxis: isArea ? {
+        title: { text: "Latitude" },
+        gridcolor: "#b8c8d3",
+        showline: true,
+        mirror: true,
+        ticks: "outside",
+        range: areaLatitudes.length ? [Math.min(...areaLatitudes), Math.max(...areaLatitudes)] : undefined,
+      } : { title: { text: groups[0].units ?? "Value" }, gridcolor: "#dbe6ef" },
     };
-    if (isArea) {
-      (layout as Partial<Layout> & { coloraxis: object }).coloraxis = {
-        colorscale: "Viridis",
-        cmin: zmin,
-        cmax: zmax === zmin ? zmin + 1 : zmax,
-        colorbar: { title: { text: groups[0].units ?? "Value" } },
-      };
-    }
     if (!isArea && groups[0].data.kind === "find-time" && groups[0].data.filter_value !== undefined) {
       layout.shapes = [{
         type: "line",
@@ -155,9 +229,21 @@ export default function PlotPanel({ result, loading }: Props) {
         line: { color: "#dc2626", width: 1.5, dash: "dash" },
       }];
     }
-    void import("plotly.js-dist-min").then(({ default: Plotly }) => {
+    const coastlineRequest = isArea ? loadCoastlines() : Promise.resolve(null);
+    void Promise.all([import("plotly.js-dist-min"), coastlineRequest]).then(([{ default: Plotly }, coastlines]) => {
       if (disposed) return;
       plotly = Plotly;
+      if (coastlines) {
+        traces.push({
+          type: "scatter",
+          mode: "lines",
+          x: coastlines.longitudes,
+          y: coastlines.latitudes,
+          line: { color: "#344e5c", width: 1.2 },
+          hoverinfo: "skip",
+          showlegend: false,
+        } as Data);
+      }
       Plotly.react(element, traces, layout, { responsive: true, displaylogo: false });
     });
     return () => {
