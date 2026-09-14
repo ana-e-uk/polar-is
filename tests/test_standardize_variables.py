@@ -1,12 +1,14 @@
 import json
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 from storage.ingest_data.standardize import (
     get_standard_var_name,
     standardize,
 )
+from storage.grid_topology import add_grid_topology
 
 
 def test_standardizes_configured_variable_name():
@@ -103,3 +105,59 @@ def test_standardize_renames_variable_and_preserves_compression(tmp_path):
         encoding = standardized["sea_surface_temperature"].encoding
         assert encoding["zlib"] is True
         assert encoding["complevel"] == 3
+
+
+def test_native_topology_assigns_global_indices_and_rectilinear_bounds():
+    data = xr.Dataset(
+        {"value": (("timestamp", "y", "x"), np.zeros((1, 2, 3)))},
+        coords={
+            "timestamp": pd.date_range("2020-01-01", periods=1),
+            "latitude": ("y", [10.0, 12.0]),
+            "longitude": ("x", [20.0, 24.0, 28.0]),
+        },
+    )
+    result, grid_type = add_grid_topology(data, "value", "rectilinear")
+
+    assert grid_type == "rectilinear"
+    np.testing.assert_array_equal(result["source_y_index"], [0, 1])
+    np.testing.assert_array_equal(result["source_x_index"], [0, 1, 2])
+    np.testing.assert_allclose(result["latitude_bounds"], [[9, 11], [11, 13]])
+    np.testing.assert_allclose(
+        result["longitude_bounds"], [[18, 22], [22, 26], [26, 30]]
+    )
+    assert "y" not in result.coords
+    assert "x" not in result.coords
+
+
+def test_carra_topology_creates_projected_coordinates_and_cf_mapping():
+    attrs = {
+        "GRIB_gridType": "lambert",
+        "GRIB_Latin1InDegrees": 80.0,
+        "GRIB_Latin2InDegrees": 80.0,
+        "GRIB_LoVInDegrees": 326.0,
+        "GRIB_LaDInDegrees": 80.0,
+        "GRIB_DxInMetres": 2500.0,
+        "GRIB_DyInMetres": 2500.0,
+        "GRIB_iScansNegatively": 0,
+        "GRIB_jScansPositively": 1,
+        "GRIB_latitudeOfFirstGridPointInDegrees": 70.135,
+        "GRIB_longitudeOfFirstGridPointInDegrees": 340.592,
+    }
+    data = xr.Dataset(
+        {"value": (("timestamp", "y", "x"), np.zeros((1, 2, 3)), attrs)},
+        coords={
+            "timestamp": pd.date_range("2020-01-01", periods=1),
+            "latitude": (("y", "x"), np.full((2, 3), 70.135)),
+            "longitude": (("y", "x"), np.full((2, 3), 340.592)),
+        },
+    )
+    result, grid_type = add_grid_topology(data, "value", "curvilinear")
+
+    assert grid_type == "projected"
+    np.testing.assert_allclose(np.diff(result["projection_x"]), 2500.0)
+    np.testing.assert_allclose(np.diff(result["projection_y"]), 2500.0)
+    assert result["projection_x"].attrs["standard_name"] == "projection_x_coordinate"
+    assert result["projection_y"].attrs["standard_name"] == "projection_y_coordinate"
+    assert result["crs"].attrs["grid_mapping_name"] == "lambert_conformal_conic"
+    assert "crs_wkt" in result["crs"].attrs
+    assert result["value"].attrs["grid_mapping"] == "crs"

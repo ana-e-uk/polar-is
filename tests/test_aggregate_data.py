@@ -19,6 +19,7 @@ from storage.ingest_data.aggregate_data import (
     temporally_aggregate,
 )
 from storage.ingest_data.make_data_blocks import block_path
+from storage.grid_topology import assign_native_grid_indices
 
 
 def _time_dataset(periods=24, frequency="1h"):
@@ -142,6 +143,23 @@ def test_spatial_aggregation_pads_edges_and_handles_auxiliaries():
     assert float(result["value"].isel(timestamp=0, y=1, x=1)) == 8.0
     assert result["value"].encoding["zlib"] is True
     assert result["value"].encoding["complevel"] == 3
+
+
+def test_spatial_aggregation_preserves_global_source_spans():
+    data = assign_native_grid_indices(
+        _time_dataset(1).assign_coords(y=[10.0, 11.0, 12.0], x=[20.0, 21.0, 22.0])
+    )
+    result = spatially_aggregate(data, "value", 2, "mean")
+
+    np.testing.assert_array_equal(result["source_y_index"], [0, 2])
+    np.testing.assert_array_equal(result["source_x_index"], [0, 2])
+    np.testing.assert_array_equal(result["source_y_start"], [0, 2])
+    np.testing.assert_array_equal(result["source_y_stop"], [2, 3])
+    np.testing.assert_array_equal(result["source_x_start"], [0, 2])
+    np.testing.assert_array_equal(result["source_x_stop"], [2, 3])
+    np.testing.assert_array_equal(result["grid_y_index"], [0, 1])
+    np.testing.assert_array_equal(result["grid_x_index"], [0, 1])
+    assert result.attrs["polaris_coarseness_factor"] == 2
 
 
 def test_spatial_mean_uses_area_weights_and_keeps_statistics():

@@ -44,6 +44,17 @@ def _write_block(scheme, block_id, bucket_id, longitude, values, weight):
             "longitude": (("y", "x"), [[longitude]]),
         },
     )
+    x_index = int(longitude)
+    data = data.assign_coords(
+        source_y_index=("y", [0]),
+        source_x_index=("x", [x_index]),
+        source_y_start=("y", [0]),
+        source_y_stop=("y", [1]),
+        source_x_start=("x", [x_index]),
+        source_x_stop=("x", [x_index + 1]),
+        grid_y_index=("y", [0]),
+        grid_x_index=("x", [x_index]),
+    )
     data = add_aggregate_statistics(data, "sea_surface_temperature")
     path = block_path(scheme, bucket_id, block_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,14 +111,24 @@ def test_executor_writes_get_data_with_coordinates_and_source(tmp_path):
     assert len(result.groups) == 1
     group = result.groups[0]
     assert group.file_path.is_file()
-    assert group.data.sizes == {"timestamp": 2, "cell": 2}
+    assert group.data.sizes == {"timestamp": 2, "cell": 2, "vertex": 4}
     assert set(group.data.coords) >= {
         "timestamp",
         "latitude",
         "longitude",
         "bucket_id",
         "cell_id",
+        "source_y_index",
+        "source_x_index",
+        "grid_y_index",
+        "grid_x_index",
+        "corner_latitude",
+        "corner_longitude",
     }
+    assert group.data["cell_id"].values.tolist() == [
+        f"{group.group_id}:c1:0:10",
+        f"{group.group_id}:c1:0:70",
+    ]
     assert group.units == "K"
     assert group.source.repository == "noaancei"
     assert group.source.dataset == "emsst"
@@ -131,7 +152,7 @@ def test_executor_combines_spatial_blocks_with_interleaved_cell_ids(tmp_path):
 
     data = execute_query(_query("get-data"), settings).groups[0].data
 
-    assert data.sizes == {"timestamp": 2, "cell": 3}
+    assert data.sizes == {"timestamp": 2, "cell": 3, "vertex": 4}
     assert set(data["longitude"].values) == {10.0, 30.0, 70.0}
 
 
@@ -158,6 +179,7 @@ def test_executor_computes_all_four_derived_functions(tmp_path):
         _query("find-time", predicate="gt", filter_value=8), settings
     ).groups[0].data
     np.testing.assert_array_equal(find_time["matches"], [False, True])
+    np.testing.assert_allclose(find_time["sea_surface_temperature"], [7.5, 11.0])
 
     find_area = execute_query(
         _query("find-area", predicate="ge", filter_value=5), settings
@@ -170,3 +192,4 @@ def test_executor_computes_all_four_derived_functions(tmp_path):
         )
     }
     assert matches_by_longitude == {10.0: False, 70.0: True}
+    assert find_area.sizes["cell"] == 2

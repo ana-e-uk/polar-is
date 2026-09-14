@@ -46,3 +46,21 @@ the single-origin production form.
 cd api/interface/frontend
 npm run build
 ```
+
+## Topology-aware query results
+
+Area results use topology stored during ingestion. Each flattened query cell
+contains stable source and requested-grid indices, its geographic center, four
+geographic corners, and projected coordinates when the source grid is
+projected. CARRA also carries a CF Lambert conformal grid mapping. Consequently,
+the frontend draws the cell polygons returned by the API; it does not estimate
+cell size from latitude/longitude.
+
+`find-time` and `find-area` return the complete aggregated result plus a
+Boolean `matches` array. The frontend plots the complete result and overlays
+the matching time points or cell outlines.
+
+Blocks created before this topology was added must be rebuilt from the source
+data. Follow the ingestion commands in `storage/documentation/DOCS_ingest.md`.
+The standardization command consumes the files listed in
+`downloaded_data.jsonl`, so retain copies if those files are needed elsewhere.

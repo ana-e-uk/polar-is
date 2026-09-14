@@ -27,6 +27,13 @@ Downloaded data is standardized as follows:
 * The longitude values are confirmed (or converted) to be within range $[0, 360)$
 * The longitude and latitude values are sorted if the grid is rectilinear
 * The grid type is added to the dataset metadata
+* Stable zero-based `source_y_index` and `source_x_index` coordinates are
+  assigned before any spatial block is created
+* Native source spans and requested-grid indices are retained so coarsened
+  cells remain identifiable without assuming the query result is rectangular
+* Rectilinear coordinate bounds are retained for cell geometry
+* CARRA's GRIB Lambert definition is translated to CF grid-mapping metadata,
+  metre-based `projection_x`/`projection_y` coordinates, and CRS WKT
 
 Standardization code is in **polar-is/ingest_data/standardize.py**
 
@@ -35,6 +42,12 @@ After standardization, every native grid cell is classified by its latitude
 and longitude center. Cells assigned to the same container are
 stored together as one block. Data values remain in their native grid and
 projection.
+
+Query execution flattens selected data to `(timestamp, cell)`. Each cell keeps
+its source index, source span, output-grid index, geographic center, bucket
+provenance, and four geographic corners. Projected grids additionally retain
+their projected center and CF grid mapping. Stable `cell_id` values include the
+source group, coarseness factor, and output-grid indices.
 
 This work is done by the script **polar-is/storage/ingest_data/make_data_blocks.py**.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import json
 import math
 import re
 from typing import Any
@@ -70,6 +71,36 @@ def _values(data: xr.Dataset, variable: str) -> list[float | None]:
     return [_json_number(value) for value in data[variable].values]
 
 
+def _numeric_coordinate(data: xr.Dataset, name: str) -> list[float | None]:
+    return [_json_number(value) for value in data[name].values]
+
+
+def _integer_coordinate(data: xr.Dataset, name: str) -> list[int]:
+    return [int(value) for value in data[name].values]
+
+
+def _display_longitude(value: Any) -> float | None:
+    number = _json_number(value)
+    return None if number is None else ((number + 180) % 360) - 180
+
+
+def _display_corner_longitudes(data: xr.Dataset) -> list[list[float | None]]:
+    """Keep each polygon continuous while using familiar displayed longitudes."""
+    rows = []
+    for center, corners in zip(data["longitude"].values, data["corner_longitude"].values):
+        display_center = ((float(center) + 180) % 360) - 180
+        row = []
+        for corner in corners:
+            display_corner = ((float(corner) + 180) % 360) - 180
+            while display_corner - display_center > 180:
+                display_corner -= 360
+            while display_corner - display_center < -180:
+                display_corner += 360
+            row.append(_json_number(display_corner))
+        rows.append(row)
+    return rows
+
+
 def _serialize_plot_data(group: GroupResult, function: str) -> dict[str, Any]:
     data = group.data
     variable = group.source.variable
@@ -81,19 +112,42 @@ def _serialize_plot_data(group: GroupResult, function: str) -> dict[str, Any]:
         }
         if "matches" in data:
             payload["matches"] = [bool(value) for value in data["matches"].values]
+            payload["predicate"] = data["matches"].attrs.get("predicate")
+            payload["filter_value"] = _json_number(
+                data["matches"].attrs.get("filter_value")
+            )
         return payload
     if function in {"heatmap", "find-area"}:
         payload = {
             "kind": function,
+            "cell_ids": [str(value) for value in data["cell_id"].values],
             "latitudes": [_json_number(value) for value in data["latitude"].values],
-            "longitudes": [
-                _json_number(((float(value) + 180) % 360) - 180)
-                for value in data["longitude"].values
+            "longitudes": [_display_longitude(value) for value in data["longitude"].values],
+            "source_y_indices": _integer_coordinate(data, "source_y_index"),
+            "source_x_indices": _integer_coordinate(data, "source_x_index"),
+            "source_y_starts": _integer_coordinate(data, "source_y_start"),
+            "source_y_stops": _integer_coordinate(data, "source_y_stop"),
+            "source_x_starts": _integer_coordinate(data, "source_x_start"),
+            "source_x_stops": _integer_coordinate(data, "source_x_stop"),
+            "grid_y_indices": _integer_coordinate(data, "grid_y_index"),
+            "grid_x_indices": _integer_coordinate(data, "grid_x_index"),
+            "corner_latitudes": [
+                [_json_number(value) for value in row]
+                for row in data["corner_latitude"].values
             ],
+            "corner_longitudes": _display_corner_longitudes(data),
             "values": _values(data, variable),
         }
+        if "projection_x" in data.coords:
+            payload["projection_x"] = _numeric_coordinate(data, "projection_x")
+        if "projection_y" in data.coords:
+            payload["projection_y"] = _numeric_coordinate(data, "projection_y")
         if "matches" in data:
             payload["matches"] = [bool(value) for value in data["matches"].values]
+            payload["predicate"] = data["matches"].attrs.get("predicate")
+            payload["filter_value"] = _json_number(
+                data["matches"].attrs.get("filter_value")
+            )
         return payload
     return {
         "kind": "get-data",
@@ -102,7 +156,14 @@ def _serialize_plot_data(group: GroupResult, function: str) -> dict[str, Any]:
     }
 
 
-def _serialize_group(group: GroupResult, result: QueryResult) -> dict[str, Any]:
+def _serialize_group(
+    group: GroupResult,
+    result: QueryResult,
+    settings: Settings,
+) -> dict[str, Any]:
+    dataset_definition = settings.name_docs.get(group.source.repository, {}).get(
+        group.source.dataset, {}
+    )
     return {
         "group_id": group.group_id,
         "source": asdict(group.source),
@@ -112,12 +173,104 @@ def _serialize_group(group: GroupResult, result: QueryResult) -> dict[str, Any]:
             "hit_count": len(group.hit_set),
             "miss_count": len(group.miss_set),
         },
+        "grid": dataset_definition.get("grid"),
+        "coarseness_factor": int(group.data.attrs["coarseness_factor"]),
         "download_url": (
             f"/api/results/{result.query_id}/{result.function}/"
             f"{group.group_id}/download"
         ),
         "data": _serialize_plot_data(group, result.function),
     }
+
+
+def _display_bounds(west: float, east: float) -> tuple[float, float]:
+    """Convert one storage-longitude envelope to a readable UI envelope."""
+    if east - west >= 359:
+        return -180.0, 180.0
+    if west >= 180:
+        return west - 360, east - 360
+    if east <= 180:
+        return west, east
+    return -180.0, 180.0
+
+
+def _availability(settings: Settings) -> list[dict[str, Any]]:
+    """Summarize native-data envelopes without opening any NetCDF blocks."""
+    spatial_level = settings.coarseness_to_spatial_level.get(1)
+    if spatial_level is None or not spatial_level.metadata.is_file():
+        return []
+
+    grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    with spatial_level.metadata.open() as metadata:
+        for line in metadata:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if record.get("product_type") != "native":
+                continue
+            summary = record.get("block_summary") or {}
+            try:
+                bounds = {
+                    "west": float(summary["lon_min"]),
+                    "east": float(summary["lon_max"]),
+                    "south": float(summary["lat_min"]),
+                    "north": float(summary["lat_max"]),
+                }
+            except (KeyError, TypeError, ValueError):
+                continue
+            parameters = record.get("additional_parameters") or {}
+            key = (
+                record["repository"],
+                record["dataset"],
+                record["variable"],
+                json.dumps(parameters, sort_keys=True, separators=(",", ":")),
+            )
+            row = grouped.setdefault(
+                key,
+                {
+                    "repository": key[0],
+                    "dataset": key[1],
+                    "variable": key[2],
+                    "additional_parameters": parameters,
+                    "region": bounds,
+                    "time_start": record["time_start"],
+                    "time_end": record["time_end"],
+                    "spatial_resolutions": set(),
+                    "temporal_resolutions": set(),
+                },
+            )
+            row["region"]["west"] = min(row["region"]["west"], bounds["west"])
+            row["region"]["east"] = max(row["region"]["east"], bounds["east"])
+            row["region"]["south"] = min(row["region"]["south"], bounds["south"])
+            row["region"]["north"] = max(row["region"]["north"], bounds["north"])
+            row["time_start"] = min(row["time_start"], record["time_start"])
+            row["time_end"] = max(row["time_end"], record["time_end"])
+            row["spatial_resolutions"].add(record.get("native_spatial_resolution"))
+            row["temporal_resolutions"].add(record.get("native_temporal_resolution"))
+
+    rows = []
+    for row in grouped.values():
+        west, east = _display_bounds(row["region"]["west"], row["region"]["east"])
+        row["region"]["west"] = round(west, 3)
+        row["region"]["east"] = round(east, 3)
+        row["region"]["south"] = round(row["region"]["south"], 3)
+        row["region"]["north"] = round(row["region"]["north"], 3)
+        row["spatial_resolutions"] = sorted(
+            value for value in row["spatial_resolutions"] if value is not None
+        )
+        row["temporal_resolutions"] = sorted(
+            value for value in row["temporal_resolutions"] if value is not None
+        )
+        rows.append(row)
+    return sorted(
+        rows,
+        key=lambda row: (
+            row["repository"],
+            row["dataset"],
+            row["variable"],
+            json.dumps(row["additional_parameters"], sort_keys=True),
+        ),
+    )
 
 
 def _catalog(settings: Settings) -> dict[str, Any]:
@@ -164,6 +317,13 @@ def get_catalog(settings: Settings = Depends(api_settings)) -> dict[str, Any]:
     return _catalog(settings)
 
 
+@app.get("/api/availability")
+def get_availability(
+    settings: Settings = Depends(api_settings),
+) -> dict[str, Any]:
+    return {"rows": _availability(settings)}
+
+
 @app.post("/api/queries")
 def post_query(
     request: QueryRequest,
@@ -178,7 +338,9 @@ def post_query(
         "function": result.function,
         "warnings": list(result.warnings),
         "unmatched_miss_count": len(result.unmatched_miss_set),
-        "groups": [_serialize_group(group, result) for group in result.groups],
+        "groups": [
+            _serialize_group(group, result, settings) for group in result.groups
+        ],
     }
 
 
