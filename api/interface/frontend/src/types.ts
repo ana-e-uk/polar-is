@@ -38,6 +38,20 @@ export type QueryForm = {
   function: string;
   aggregation_method: string;
   additional_parameters: Record<string, string | number>;
+  predicate: string;
+  filter_value: string;
+};
+
+export type AvailabilityRow = {
+  repository: string;
+  dataset: string;
+  variable: string;
+  additional_parameters: Record<string, unknown>;
+  region: Region;
+  time_start: string;
+  time_end: string;
+  spatial_resolutions: Array<string | number>;
+  temporal_resolutions: string[];
 };
 
 type TimeData = {
@@ -45,14 +59,31 @@ type TimeData = {
   timestamps: string[];
   values: Array<number | null>;
   matches?: boolean[];
+  predicate?: string;
+  filter_value?: number;
 };
 
 type AreaData = {
   kind: "heatmap" | "find-area";
+  cell_ids: string[];
   latitudes: Array<number | null>;
   longitudes: Array<number | null>;
+  source_y_indices: number[];
+  source_x_indices: number[];
+  source_y_starts: number[];
+  source_y_stops: number[];
+  source_x_starts: number[];
+  source_x_stops: number[];
+  grid_y_indices: number[];
+  grid_x_indices: number[];
+  projection_x?: Array<number | null>;
+  projection_y?: Array<number | null>;
+  corner_latitudes: Array<Array<number | null>>;
+  corner_longitudes: Array<Array<number | null>>;
   values: Array<number | null>;
   matches?: boolean[];
+  predicate?: string;
+  filter_value?: number;
 };
 
 type DownloadData = {
@@ -69,6 +100,13 @@ export type ResultGroup = {
     variable: string;
     additional_parameters: Record<string, unknown>;
   };
+  grid: {
+    type?: string;
+    name?: string;
+    resolution?: number[];
+    units?: string;
+  } | null;
+  coarseness_factor: number;
   units: string | null;
   warnings: string[];
   coverage: { hit_count: number; miss_count: number };
@@ -83,4 +121,3 @@ export type QueryResult = {
   unmatched_miss_count: number;
   groups: ResultGroup[];
 };
-

@@ -35,6 +35,18 @@ def _settings(tmp_path):
             "longitude": (("y", "x"), [[20.0]]),
         },
     )
+    data["latitude_bounds"] = (("y", "bounds"), [[9.875, 10.125]])
+    data["longitude_bounds"] = (("x", "bounds"), [[19.875, 20.125]])
+    data = data.assign_coords(
+        source_y_index=("y", [40]),
+        source_x_index=("x", [80]),
+        source_y_start=("y", [40]),
+        source_y_stop=("y", [41]),
+        source_x_start=("x", [80]),
+        source_x_stop=("x", [81]),
+        grid_y_index=("y", [40]),
+        grid_x_index=("x", [80]),
+    )
     data = add_aggregate_statistics(data, "sea_surface_temperature")
     path = block_path(scheme, "r3_c0", "web-test")
     path.parent.mkdir(parents=True)
@@ -94,12 +106,35 @@ def test_catalog_and_timeseries_query_boundary(tmp_path):
         assert catalog.status_code == 200
         assert catalog.json()["coarseness_factors"] == [1]
 
+        availability = client.get("/api/availability")
+        assert availability.status_code == 200
+        assert availability.json()["rows"] == [
+            {
+                "repository": "noaancei",
+                "dataset": "emsst",
+                "variable": "sea_surface_temperature",
+                "additional_parameters": {},
+                "region": {
+                    "west": 20.0,
+                    "east": 20.0,
+                    "south": 10.0,
+                    "north": 10.0,
+                },
+                "time_start": "2020-01-01T00:00:00",
+                "time_end": "2020-01-02T00:00:00",
+                "spatial_resolutions": [0.25],
+                "temporal_resolutions": ["1D"],
+            }
+        ]
+
         response = client.post("/api/queries", json=_query())
         assert response.status_code == 200
         body = response.json()
         assert body["function"] == "timeseries"
         assert len(body["groups"]) == 1
         group = body["groups"][0]
+        assert group["grid"]["resolution"] == [0.25]
+        assert group["coarseness_factor"] == 1
         assert group["data"] == {
             "kind": "timeseries",
             "timestamps": ["2020-01-01T00:00:00", "2020-01-02T00:00:00"],
@@ -137,10 +172,22 @@ def test_heatmap_query_returns_plot_ready_coordinates(tmp_path):
             json={**_query(), "function": "heatmap"},
         )
         assert response.status_code == 200
-        assert response.json()["groups"][0]["data"] == {
+        data = response.json()["groups"][0]["data"]
+        assert data == {
             "kind": "heatmap",
+            "cell_ids": [response.json()["groups"][0]["group_id"] + ":c1:40:80"],
             "latitudes": [10.0],
             "longitudes": [20.0],
+            "source_y_indices": [40],
+            "source_x_indices": [80],
+            "source_y_starts": [40],
+            "source_y_stops": [41],
+            "source_x_starts": [80],
+            "source_x_stops": [81],
+            "grid_y_indices": [40],
+            "grid_x_indices": [80],
+            "corner_latitudes": [[9.875, 9.875, 10.125, 10.125]],
+            "corner_longitudes": [[19.875, 20.125, 20.125, 19.875]],
             "values": [281.0],
         }
     finally:

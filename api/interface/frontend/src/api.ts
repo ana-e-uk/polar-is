@@ -1,4 +1,4 @@
-import type { Catalog, QueryForm, QueryResult } from "./types";
+import type { AvailabilityRow, Catalog, QueryForm, QueryResult } from "./types";
 
 async function responseJson<T>(response: Response): Promise<T> {
   const body = await response.json();
@@ -17,11 +17,21 @@ export async function fetchCatalog(): Promise<Catalog> {
   return responseJson<Catalog>(await fetch("/api/catalog"));
 }
 
+export async function fetchAvailability(): Promise<AvailabilityRow[]> {
+  const body = await responseJson<{ rows: AvailabilityRow[] }>(
+    await fetch("/api/availability"),
+  );
+  return body.rows;
+}
+
 export async function runQuery(form: QueryForm): Promise<QueryResult> {
+  const isFilter = form.function === "find-time" || form.function === "find-area";
   const payload = {
     ...form,
     repository: form.repository || null,
     dataset: form.dataset || null,
+    predicate: isFilter ? form.predicate : null,
+    filter_value: isFilter && form.filter_value !== "" ? Number(form.filter_value) : null,
   };
   return responseJson<QueryResult>(
     await fetch("/api/queries", {
@@ -31,4 +41,3 @@ export async function runQuery(form: QueryForm): Promise<QueryResult> {
     }),
   );
 }
-

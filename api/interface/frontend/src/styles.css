@@ -31,6 +31,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .panel-heading h2, .result-heading h2, .summary-card h2, .warnings h2 { margin: 3px 0 0; font-size: 1.05rem; font-weight: 650; text-transform: capitalize; }
 .map-hint { color: #61788b; font-size: .8rem; }
 .map { height: calc(100% - 66px); background: #dceaf0; z-index: 0; }
+.map.drawing-region, .map.drawing-region * { cursor: crosshair !important; }
+.map-actions { display: flex; align-items: center; gap: 12px; }
 .result-panel { height: calc(100% - 66px); background: white; }
 .plot { width: 100%; height: 100%; }
 
@@ -42,11 +44,15 @@ input, select { width: 100%; min-height: 38px; padding: 8px 10px; color: #163149
 input:focus, select:focus { border-color: #0e9385; box-shadow: 0 0 0 3px rgba(22, 184, 166, .14); }
 .bounds-grid { display: grid; grid-template-columns: repeat(4, minmax(100px, 1fr)); gap: 10px; margin: 12px 0 0; padding: 9px 12px 12px; border: 1px solid #d6e2ea; border-radius: 6px; }
 .bounds-grid legend { padding: 0 5px; color: #506b7e; font-size: .76rem; font-weight: 700; }
-.query-button, .secondary-button { cursor: pointer; border: 0; border-radius: 5px; font-weight: 700; }
-.query-button { width: 100%; min-height: 42px; margin-top: 12px; color: white; background: #087f74; }
+.query-button, .secondary-button, .availability-button { cursor: pointer; border: 0; border-radius: 5px; font-weight: 700; }
+.query-button { min-height: 42px; color: white; background: #087f74; }
 .query-button:hover { background: #086d65; }
 .query-button:disabled { cursor: wait; opacity: .62; }
 .secondary-button { padding: 9px 13px; color: #0b655e; background: #e5f7f4; }
+.secondary-button.active { color: white; background: #087f74; }
+.control-actions { display: grid; grid-template-columns: minmax(150px, .35fr) minmax(240px, 1fr); gap: 10px; margin-top: 12px; }
+.availability-button { min-height: 42px; color: #0b655e; background: #e5f7f4; border: 1px solid #a9ddd7; }
+.availability-button:hover, .secondary-button:hover { background: #d4f0ec; }
 
 .summary-card, .warnings { padding: 17px; }
 .summary-card h2 { margin-bottom: 16px; }
@@ -71,6 +77,18 @@ input:focus, select:focus { border-color: #0e9385; box-shadow: 0 0 0 3px rgba(22
 .empty-orbit { width: 42px; height: 42px; border: 1px solid #9eb7c5; border-radius: 50%; box-shadow: 0 0 0 7px #edf6f7; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.dialog-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: rgba(6, 28, 43, .68); }
+.availability-dialog { width: min(1180px, 100%); max-height: min(760px, calc(100vh - 48px)); display: flex; flex-direction: column; overflow: hidden; background: white; border-radius: 9px; box-shadow: 0 24px 80px rgba(4, 25, 39, .32); }
+.dialog-heading { display: flex; align-items: center; justify-content: space-between; padding: 17px 20px; border-bottom: 1px solid #dce6ed; }
+.dialog-heading h2 { margin: 3px 0 0; font-size: 1.15rem; }
+.dialog-state { min-height: 220px; display: grid; place-items: center; align-content: center; gap: 10px; color: #61788b; }
+.table-scroll { overflow: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+th { position: sticky; top: 0; z-index: 1; padding: 11px 13px; text-align: left; color: #456276; background: #edf4f7; border-bottom: 1px solid #c8d7e0; white-space: nowrap; }
+td { padding: 12px 13px; vertical-align: top; border-bottom: 1px solid #e1e9ee; }
+td span { display: block; margin-top: 3px; color: #6d8392; }
+tbody tr:hover { background: #f5fafb; }
+
 @media (max-width: 980px) {
   .workspace { height: auto; min-height: calc(100vh - 76px); grid-template-columns: 1fr; grid-template-rows: 480px auto auto; }
   .side-column { grid-row: 2; overflow: visible; }
@@ -84,4 +102,6 @@ input:focus, select:focus { border-color: #0e9385; box-shadow: 0 0 0 3px rgba(22
   .header-note, .map-hint { display: none; }
   .workspace { padding: 8px; gap: 8px; }
   .control-grid, .bounds-grid { grid-template-columns: 1fr; }
+  .control-actions { grid-template-columns: 1fr; }
+  .dialog-backdrop { padding: 8px; }
 }

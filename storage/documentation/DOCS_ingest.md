@@ -1,19 +1,17 @@
 # Ingesting data into Polaris system
 
 ## Steps to manually ingest data
-1. Data to ingest will be in the `downloaded_data_dir` specified in **config.yaml**. Currently, it is: **storage/data/tmp/downloaded/**.
+1. Make sure the downloaded data jsonl file exists at the directory specified in `downloaded_data` in **config.yaml**. Each row of the file should contain one dictionary with metadata of a group of files that can be combined and standardized.
 
-2. Polar-is will process the files listed in the file specified by `downloaded_data` in **config.yaml**. Each row of the file should contain one dictionary with metadata of a group of files that can be combined and standardized.
-
-3. Begin standardization with the following command. The standardized data will be stored in **storage/data/tmp/standardized/** (`standardized_data_dir` in config file). The downloaded files will be deleted once the standard ones are saved. Terminal command:
+2. Standardize all files listed in the metadata of the **storage/data/downloaded/** directory. The standardized data will be stored in **storage/data/standardized/** and the downloaded files will be deleted once the standard ones are saved. In the terminal, run:
 
         python -m storage.ingest_data.standardize
 
-4. Generate or validate every configured spatial container scheme:
+3. Generate or validate every configured spatial container scheme:
 
         python -m storage.manage.space_containers
 
-5. Create the complete spatio-temporal aggregate hierarchy. Every product is
+4. Create the complete spatio-temporal aggregate hierarchy. Every product is
    divided into blocks using its configured capacity:
 
         python -m storage.ingest_data.aggregate_data
@@ -29,6 +27,13 @@ Downloaded data is standardized as follows:
 * The longitude values are confirmed (or converted) to be within range $[0, 360)$
 * The longitude and latitude values are sorted if the grid is rectilinear
 * The grid type is added to the dataset metadata
+* Stable zero-based `source_y_index` and `source_x_index` coordinates are
+  assigned before any spatial block is created
+* Native source spans and requested-grid indices are retained so coarsened
+  cells remain identifiable without assuming the query result is rectangular
+* Rectilinear coordinate bounds are retained for cell geometry
+* CARRA's GRIB Lambert definition is translated to CF grid-mapping metadata,
+  metre-based `projection_x`/`projection_y` coordinates, and CRS WKT
 
 Standardization code is in **polar-is/ingest_data/standardize.py**
 
@@ -37,6 +42,12 @@ After standardization, every native grid cell is classified by its latitude
 and longitude center. Cells assigned to the same container are
 stored together as one block. Data values remain in their native grid and
 projection.
+
+Query execution flattens selected data to `(timestamp, cell)`. Each cell keeps
+its source index, source span, output-grid index, geographic center, bucket
+provenance, and four geographic corners. Projected grids additionally retain
+their projected center and CF grid mapping. Stable `cell_id` values include the
+source group, coarseness factor, and output-grid indices.
 
 This work is done by the script **polar-is/storage/ingest_data/make_data_blocks.py**.
 
@@ -102,50 +113,27 @@ and maximum variables so query results can combine their values correctly.
 
 ```
         Native resolution groups: ERA5  - (Capacity-1, H)       - Capacity-1=0.25, 0.5
-                                  CARRA - (Capacity-1, 3H)   - Capacity-1=2.5km^2
+                                  CARRA - (Capacity-1, 3H(?))   - Capacity-1=2.5km^2
                                   WHOI  - (Capacity-1, 3H)      - Capacity-1=0.25
                                   EMSST - (Capacity-1, D)       - Capacity-1=0.25
 
         (Resulting groups) - datasets with blocks in group
                           (Capacity-1, H) - ERA5  
-                          (Capacity-1, 3H)- ERA5  CARRA       WHOI
+                          (Capacity-1, 3H)- ERA5  CARRA(?)    WHOI
                           (Capacity-1, D) - ERA5  CARRA       WHOI    EMSST
                           (Capacity-1, M) - ERA5  CARRA       WHOI    EMSST
                           (Capacity-1, Y) - ERA5  CARRA       WHOI    EMSST
 
         Resulting groups: (Capacity-2, H) - ERA5   
-                          (Capacity-2, 3H)- ERA5   CARRA       WHOI
+                          (Capacity-2, 3H)- ERA5   CARRA(?)    WHOI
                           (Capacity-2, D) - ERA5   CARRA       WHOI    EMSST
                           (Capacity-2, M) - ERA5   CARRA       WHOI    EMSST
                           (Capacity-2, Y) - ERA5   CARRA       WHOI    EMSST
 
                           (Capacity-4, H) - ERA5   
-                          (Capacity-4, 3H)- ERA5   CARRA       WHOI
+                          (Capacity-4, 3H)- ERA5   CARRA(?)    WHOI
                           (Capacity-4, D) - ERA5   CARRA       WHOI    EMSST
                           (Capacity-4, M) - ERA5   CARRA       WHOI    EMSST
                           (Capacity-4, Y) - ERA5   CARRA       WHOI    EMSST
 
-```
-
-Some statistics for accurate aggregation are retained inside each aggregate NetCDF block.
-
-`capacity_2` and `capacity_4` blocks contain:
-
-- `polaris_weighted_sum`
-- `polaris_weight_sum`
-- `polaris_valid_count`
-- `polaris_min`
-- `polaris_max`
-
-They preserve spatially and temporally varying statistics for combining selected blocks.
-
-For blocks \(i\), the executor can calculate:
-
-```text
-weighted_sum = sum(weighted_sum_i)
-weight_sum   = sum(weight_sum_i)
-valid_count  = sum(valid_count_i)
-mean         = weighted_sum / weight_sum
-min          = min(min_i)
-max          = max(max_i)
 ```

@@ -22,6 +22,7 @@ from storage.ingest_data.make_data_blocks import (
     block_path,
     spatially_crop_block,
 )
+from storage.grid_topology import transformer_from_grid_mapping
 from storage.query_data.query_data import (
     BlockGroupCoverage,
     BoundingBox,
@@ -103,10 +104,137 @@ def _spatial_mask(data: xr.Dataset, region: BoundingBox) -> xr.DataArray:
     return latitude_mask & longitude_mask
 
 
+def _spatial_coordinate_values(
+    data: xr.Dataset,
+    name: str,
+    cell_indices: np.ndarray,
+) -> np.ndarray:
+    """Broadcast one topology coordinate to y/x and select flattened cells."""
+    coordinate = data[name]
+    if coordinate.dims == ("y",):
+        values = np.broadcast_to(
+            np.asarray(coordinate.values)[:, None],
+            (data.sizes["y"], data.sizes["x"]),
+        )
+    elif coordinate.dims == ("x",):
+        values = np.broadcast_to(
+            np.asarray(coordinate.values)[None, :],
+            (data.sizes["y"], data.sizes["x"]),
+        )
+    elif coordinate.dims == ("y", "x"):
+        values = np.asarray(coordinate.values)
+    else:
+        raise ValueError(f"Topology coordinate {name!r} has unsupported dimensions")
+    return values.reshape(-1)[cell_indices]
+
+
+def _inferred_curvilinear_vertices(
+    data: xr.Dataset,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Infer a vertex lattice when an irregular source provides centers only."""
+    latitude = np.asarray(data["latitude"].values, dtype=float)
+    longitude = np.rad2deg(
+        np.unwrap(np.unwrap(np.deg2rad(data["longitude"].values), axis=1), axis=0)
+    )
+
+    def vertices(values: np.ndarray) -> np.ndarray:
+        padded = np.empty((values.shape[0] + 2, values.shape[1] + 2), dtype=float)
+        padded[1:-1, 1:-1] = values
+        if values.shape[0] > 1:
+            padded[0, 1:-1] = 2 * values[0] - values[1]
+            padded[-1, 1:-1] = 2 * values[-1] - values[-2]
+        else:
+            padded[0, 1:-1] = padded[-1, 1:-1] = values[0]
+        if values.shape[1] > 1:
+            padded[1:-1, 0] = 2 * values[:, 0] - values[:, 1]
+            padded[1:-1, -1] = 2 * values[:, -1] - values[:, -2]
+        else:
+            padded[1:-1, 0] = padded[1:-1, -1] = values[:, 0]
+        padded[0, 0] = padded[0, 1] + padded[1, 0] - padded[1, 1]
+        padded[0, -1] = padded[0, -2] + padded[1, -1] - padded[1, -2]
+        padded[-1, 0] = padded[-1, 1] + padded[-2, 0] - padded[-2, 1]
+        padded[-1, -1] = padded[-1, -2] + padded[-2, -1] - padded[-2, -2]
+        return (
+            padded[:-1, :-1]
+            + padded[:-1, 1:]
+            + padded[1:, :-1]
+            + padded[1:, 1:]
+        ) / 4
+
+    return vertices(latitude), vertices(longitude)
+
+
+def _cell_corners(
+    data: xr.Dataset,
+    cell_indices: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return four geographic corners for each selected native/coarse cell."""
+    y_indices, x_indices = np.unravel_index(
+        cell_indices, (data.sizes["y"], data.sizes["x"])
+    )
+    transformer = transformer_from_grid_mapping(data)
+    if transformer is not None:
+        crs = data["crs"].attrs
+        x_origin = float(crs["polaris_projection_x_origin"])
+        y_origin = float(crs["polaris_projection_y_origin"])
+        x_step = float(crs["polaris_projection_x_step"])
+        y_step = float(crs["polaris_projection_y_step"])
+        x_start = _spatial_coordinate_values(data, "source_x_start", cell_indices)
+        x_stop = _spatial_coordinate_values(data, "source_x_stop", cell_indices)
+        y_start = _spatial_coordinate_values(data, "source_y_start", cell_indices)
+        y_stop = _spatial_coordinate_values(data, "source_y_stop", cell_indices)
+        x_edges = np.column_stack(
+            (x_origin + (x_start - 0.5) * x_step,
+             x_origin + (x_stop - 0.5) * x_step)
+        )
+        y_edges = np.column_stack(
+            (y_origin + (y_start - 0.5) * y_step,
+             y_origin + (y_stop - 0.5) * y_step)
+        )
+        west, east = np.min(x_edges, axis=1), np.max(x_edges, axis=1)
+        south, north = np.min(y_edges, axis=1), np.max(y_edges, axis=1)
+        projected_x = np.column_stack((west, east, east, west))
+        projected_y = np.column_stack((south, south, north, north))
+        longitude, latitude = transformer.transform(projected_x, projected_y)
+        return np.asarray(latitude), np.asarray(longitude) % 360
+
+    if "latitude_bounds" in data and "longitude_bounds" in data:
+        latitude_bounds = np.asarray(data["latitude_bounds"].values)[y_indices]
+        longitude_bounds = np.asarray(data["longitude_bounds"].values)[x_indices]
+        south = np.min(latitude_bounds, axis=1)
+        north = np.max(latitude_bounds, axis=1)
+        west = np.min(longitude_bounds, axis=1)
+        east = np.max(longitude_bounds, axis=1)
+        return (
+            np.column_stack((south, south, north, north)),
+            np.column_stack((west, east, east, west)) % 360,
+        )
+
+    vertex_latitude, vertex_longitude = _inferred_curvilinear_vertices(data)
+    latitude = np.column_stack(
+        (
+            vertex_latitude[y_indices, x_indices],
+            vertex_latitude[y_indices, x_indices + 1],
+            vertex_latitude[y_indices + 1, x_indices + 1],
+            vertex_latitude[y_indices + 1, x_indices],
+        )
+    )
+    longitude = np.column_stack(
+        (
+            vertex_longitude[y_indices, x_indices],
+            vertex_longitude[y_indices, x_indices + 1],
+            vertex_longitude[y_indices + 1, x_indices + 1],
+            vertex_longitude[y_indices + 1, x_indices],
+        )
+    )
+    return latitude, longitude % 360
+
+
 def _block_to_cells(
     data: xr.Dataset,
     query: Query,
     bucket_id: str,
+    cell_namespace: str,
 ) -> xr.Dataset | None:
     if "timestamp" not in data.dims:
         return None
@@ -128,6 +256,23 @@ def _block_to_cells(
     if cell_indices.size == 0:
         return None
 
+    required_topology = {
+        "source_y_index",
+        "source_x_index",
+        "source_y_start",
+        "source_y_stop",
+        "source_x_start",
+        "source_x_stop",
+        "grid_y_index",
+        "grid_x_index",
+    }
+    missing_topology = sorted(required_topology - set(data.coords))
+    if missing_topology:
+        raise ValueError(
+            "Stored block predates explicit grid topology; rebuild it before querying "
+            f"(missing: {', '.join(missing_topology)})"
+        )
+
     names = [query.variable, *AGGREGATE_STATISTICS]
     cells = data[names].stack(cell=("y", "x")).isel(cell=cell_indices)
     latitude, longitude = xr.broadcast(data["latitude"], data["longitude"])
@@ -135,18 +280,38 @@ def _block_to_cells(
     longitude = (longitude % 360).transpose("y", "x").stack(cell=("y", "x"))
     latitude_values = latitude.isel(cell=cell_indices).values
     longitude_values = longitude.isel(cell=cell_indices).values
-    cell_keys = np.asarray(
-        [
-            f"{float(lat):.12g},{float(lon):.12g}"
-            for lat, lon in zip(latitude_values, longitude_values)
-        ],
-        dtype=str,
-    )
+    topology = {
+        name: _spatial_coordinate_values(data, name, cell_indices)
+        for name in required_topology
+    }
+    cell_keys = np.asarray([
+        f"{cell_namespace}:c{query.coarseness_factor}:"
+        f"{int(y_index)}:{int(x_index)}"
+        for y_index, x_index in zip(
+            topology["grid_y_index"], topology["grid_x_index"]
+        )
+    ])
+    corner_latitude, corner_longitude = _cell_corners(data, cell_indices)
+    coordinate_values: dict[str, Any] = {
+        "cell": cell_keys,
+        "cell_id": ("cell", cell_keys),
+        "latitude": ("cell", latitude_values),
+        "longitude": ("cell", longitude_values),
+        "bucket_id": ("cell", np.full(cell_keys.size, bucket_id, dtype=str)),
+        "vertex": np.arange(4, dtype=np.int8),
+        "corner_latitude": (("cell", "vertex"), corner_latitude),
+        "corner_longitude": (("cell", "vertex"), corner_longitude),
+    }
+    for name, values in topology.items():
+        coordinate_values[name] = ("cell", values.astype(np.int64))
+    for name in ("projection_x", "projection_y"):
+        if name in data.coords:
+            coordinate_values[name] = (
+                "cell",
+                _spatial_coordinate_values(data, name, cell_indices),
+            )
     cells = cells.reset_index("cell", drop=True).assign_coords(
-        cell=cell_keys,
-        latitude=("cell", latitude_values),
-        longitude=("cell", longitude_values),
-        bucket_id=("cell", np.full(cell_keys.size, bucket_id, dtype=str)),
+        coordinate_values
     )
     for name in names:
         cells[name] = cells[name].transpose("timestamp", "cell")
@@ -172,7 +337,12 @@ def _get_data(
             record["block_id"],
         )
         with xr.open_dataset(path) as data:
-            cells = _block_to_cells(data, plan.query, record["bucket_id"])
+            cells = _block_to_cells(
+                data,
+                plan.query,
+                record["bucket_id"],
+                _group_id(group),
+            )
         if cells is not None:
             blocks.append(cells)
             used_records.append(record)
@@ -261,17 +431,33 @@ def _apply_predicate(data: xr.Dataset, query: Query) -> xr.Dataset:
     return result
 
 
+def _with_cell_topology(result: xr.Dataset, source: xr.Dataset) -> xr.Dataset:
+    """Restore cell coordinates whose vertex dimension is not on the value."""
+    if "cell" not in result.dims:
+        return result
+    for name, coordinate in source.coords.items():
+        if name in result.coords or "timestamp" in coordinate.dims:
+            continue
+        if set(coordinate.dims).issubset({"cell", "vertex"}):
+            result = result.assign_coords({name: coordinate})
+        elif not coordinate.dims:
+            result = result.assign_coords({name: coordinate})
+    return result
+
+
 def _compute_result(data: xr.Dataset, query: Query) -> xr.Dataset:
     if query.function == "get-data":
-        return _requested_values(data, query).to_dataset()
+        result = _requested_values(data, query).to_dataset()
+        return _with_cell_topology(result, data)
     if query.function == "timeseries":
         return _collapse_data(data, query, "cell")
     if query.function == "heatmap":
-        return _collapse_data(data, query, "timestamp")
+        return _with_cell_topology(_collapse_data(data, query, "timestamp"), data)
     if query.function == "find-time":
         return _apply_predicate(_collapse_data(data, query, "cell"), query)
     if query.function == "find-area":
-        return _apply_predicate(_collapse_data(data, query, "timestamp"), query)
+        result = _collapse_data(data, query, "timestamp")
+        return _apply_predicate(_with_cell_topology(result, data), query)
     raise ValueError(f"Unsupported function: {query.function!r}")
 
 

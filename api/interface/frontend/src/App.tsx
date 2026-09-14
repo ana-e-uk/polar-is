@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchCatalog, runQuery } from "./api";
+import { fetchAvailability, fetchCatalog, runQuery } from "./api";
+import AvailabilityTable from "./AvailabilityTable";
 import PlotPanel from "./PlotPanel";
 import QueryControls from "./QueryControls";
 import RegionPicker from "./RegionPicker";
-import type { Catalog, QueryForm, QueryResult } from "./types";
+import type { AvailabilityRow, Catalog, QueryForm, QueryResult } from "./types";
 
 const initialForm: QueryForm = {
   repository: "",
@@ -17,6 +18,8 @@ const initialForm: QueryForm = {
   function: "timeseries",
   aggregation_method: "mean",
   additional_parameters: {},
+  predicate: "gt",
+  filter_value: "",
 };
 
 export default function App() {
@@ -26,6 +29,10 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showMap, setShowMap] = useState(true);
+  const [showAvailability, setShowAvailability] = useState(false);
+  const [availability, setAvailability] = useState<AvailabilityRow[]>([]);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState("");
 
   useEffect(() => {
     fetchCatalog().then((next) => {
@@ -42,8 +49,20 @@ export default function App() {
   }, [result]);
 
   async function submit() {
-    setLoading(true);
     setError("");
+    if (!form.variable || !form.time_start || !form.time_end) {
+      setError("Choose a variable and enter both dates before running the query.");
+      return;
+    }
+    if (form.region.west >= form.region.east || form.region.south >= form.region.north) {
+      setError("Enter a region where West is less than East and South is less than North.");
+      return;
+    }
+    if ((form.function === "find-time" || form.function === "find-area") && form.filter_value === "") {
+      setError("Enter a filter value for the selected find function.");
+      return;
+    }
+    setLoading(true);
     try {
       const next = await runQuery(form);
       setResult(next);
@@ -52,6 +71,20 @@ export default function App() {
       setError(reason instanceof Error ? reason.message : "The query could not be completed.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function openAvailability() {
+    setShowAvailability(true);
+    if (availability.length) return;
+    setAvailabilityLoading(true);
+    setAvailabilityError("");
+    try {
+      setAvailability(await fetchAvailability());
+    } catch (reason) {
+      setAvailabilityError(reason instanceof Error ? reason.message : "Available data could not be loaded.");
+    } finally {
+      setAvailabilityLoading(false);
     }
   }
 
@@ -78,10 +111,10 @@ export default function App() {
           {warnings.length > 0 && <section className="warnings" aria-live="polite"><h2>Coverage notes</h2><ul>{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section>}
         </aside>
         <div className="controls-row">
-          {catalog ? <QueryControls catalog={catalog} form={form} onChange={setForm} onSubmit={submit} loading={loading} /> : <section className="controls-panel state-panel"><div className="spinner" /><p>Loading available data…</p></section>}
+          {catalog ? <QueryControls catalog={catalog} form={form} onChange={setForm} onSubmit={submit} onShowAvailability={openAvailability} loading={loading} /> : <section className="controls-panel state-panel"><div className="spinner" /><p>Loading available data…</p></section>}
         </div>
       </div>
+      {showAvailability && <AvailabilityTable rows={availability} loading={availabilityLoading} error={availabilityError} onClose={() => setShowAvailability(false)} />}
     </main>
   );
 }
-

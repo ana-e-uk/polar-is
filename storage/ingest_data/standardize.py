@@ -32,13 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.config import get_settings
-
-# TODO: For future projected datasets that do not have auxiliary lat/lon, keep:
-# - native x, y coordinate values
-# - x, y units
-# - CF grid_mapping variable
-# - data variable's reference to that grid mapping
-# - CRS as WKT
+from storage.grid_topology import add_grid_topology
 
 # TODO: assert the scientific variable name exists in the list of variables in
 # the dataset dictionary in config.
@@ -254,8 +248,8 @@ def inspect_grid(ds: xr.Dataset) -> tuple[xr.Dataset, dict]:
         coordinate_rename[roles["longitude"]] = "longitude"
 
     if grid_type == "projected":
-        coordinate_rename[roles["y"]] = "y"
-        coordinate_rename[roles["x"]] = "x"
+        coordinate_rename[roles["y"]] = "projection_y"
+        coordinate_rename[roles["x"]] = "projection_x"
 
     coordinate_rename = {
         old: new
@@ -420,6 +414,14 @@ def standardize(records, tmp_dir, metadata_output) -> None:
             data, standard_var_name = get_standard_var_name(
                 ds=data,
                 record=record,
+            )
+
+            # Assign global source indices only after rectilinear sorting, but
+            # before any spatial block is cut from the native grid.
+            data, grid_info["grid_type"] = add_grid_topology(
+                data,
+                standard_var_name,
+                grid_info["grid_type"],
             )
 
             # Save info of new file

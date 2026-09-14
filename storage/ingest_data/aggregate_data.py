@@ -21,6 +21,7 @@ from storage.ingest_data.make_data_blocks import (
     write_blocks,
 )
 from storage.ingest_data.standardize import read_metadata
+from storage.grid_topology import INDEX_COORDINATES
 from storage.manage.space_containers import ensure_container_scheme
 
 
@@ -334,6 +335,56 @@ def _auxiliary_spatial_method(name: str, array: xr.DataArray) -> str:
     return "mean" if np.issubdtype(array.dtype, np.number) else "first"
 
 
+def _coarsen_axis_bounds(
+    bounds: xr.DataArray,
+    dimension: str,
+    factor: int,
+) -> xr.DataArray:
+    """Keep the outside edges of each coarsened rectilinear cell."""
+    lower = _coarsen_reduce(bounds.isel(bounds=0), factor, "min")
+    upper = _coarsen_reduce(bounds.isel(bounds=1), factor, "max")
+    result = xr.concat([lower, upper], dim="bounds").transpose(dimension, "bounds")
+    result = result.assign_coords(bounds=[0, 1])
+    result.attrs = bounds.attrs.copy()
+    return result
+
+
+def _assign_coarsened_topology(
+    result: xr.Dataset,
+    data: xr.Dataset,
+    factor: int,
+) -> xr.Dataset:
+    """Preserve native spans and define stable requested-grid indices."""
+    coordinates: dict[str, tuple[str, object, dict]] = {}
+    for axis in ("y", "x"):
+        start_name = f"source_{axis}_start"
+        stop_name = f"source_{axis}_stop"
+        index_name = f"source_{axis}_index"
+        grid_name = f"grid_{axis}_index"
+        if start_name not in data.coords or stop_name not in data.coords:
+            continue
+        starts = _coarsen_reduce(data[start_name], factor, "first").astype(np.int64)
+        stops = _coarsen_reduce(data[stop_name], factor, "max").astype(np.int64)
+        coordinate_values = {
+            start_name: starts,
+            stop_name: stops,
+            # The source index is the native anchor of a coarse cell; the
+            # complete contributing interval is represented by start/stop.
+            index_name: starts.copy(),
+            grid_name: (starts // factor).astype(np.int64),
+        }
+        for name, values in coordinate_values.items():
+            attrs = data[name].attrs.copy() if name in data.coords else {}
+            # Do not carry the source dimension index: xarray assigns mean
+            # labels to coarsened dimensions, whereas ``first`` retains the
+            # original labels. Only the integer topology values belong here.
+            coordinates[name] = (axis, values.data, attrs)
+    if coordinates:
+        result = result.assign_coords(coordinates)
+    result.attrs["polaris_coarseness_factor"] = factor
+    return result
+
+
 def spatially_aggregate(
     data: xr.Dataset,
     variable: str,
@@ -361,6 +412,8 @@ def spatially_aggregate(
     result = scientific.to_dataset(name=variable)
     for name, array in data.data_vars.items():
         if name == variable or name in AGGREGATE_STATISTICS:
+            continue
+        if name in {"latitude_bounds", "longitude_bounds"}:
             continue
         if not ({"y", "x"} & set(array.dims)):
             result[name] = array
@@ -399,8 +452,20 @@ def spatially_aggregate(
                 data["longitude"], factor
             )
         )
+    if "latitude_bounds" in data:
+        result["latitude_bounds"] = _coarsen_axis_bounds(
+            data["latitude_bounds"], "y", factor
+        )
+    if "longitude_bounds" in data:
+        result["longitude_bounds"] = _coarsen_axis_bounds(
+            data["longitude_bounds"], "x", factor
+        )
     for name, coordinate in data.coords.items():
-        if name in {"latitude", "longitude"} or name in result.coords:
+        if (
+            name in {"latitude", "longitude"}
+            or name in INDEX_COORDINATES
+            or name in result.coords
+        ):
             continue
         if {"y", "x"} & set(coordinate.dims):
             method_for_coordinate = (
@@ -417,6 +482,7 @@ def spatially_aggregate(
         if name in data.data_vars:
             _preserve_compression(data[name], result[name])
     result.attrs = data.attrs.copy()
+    result = _assign_coarsened_topology(result, data, factor)
     return result
 
 
