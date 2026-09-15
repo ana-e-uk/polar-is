@@ -105,6 +105,15 @@ def test_catalog_and_timeseries_query_boundary(tmp_path):
         catalog = client.get("/api/catalog")
         assert catalog.status_code == 200
         assert catalog.json()["coarseness_factors"] == [1]
+        combined = next(
+            dataset
+            for repository in catalog.json()["repositories"]
+            for dataset in repository["datasets"]
+            if dataset["name"] == "combined"
+        )
+        assert combined["display_name"] == settings.name_docs["polaris"][
+            "combined"
+        ]["display_name"]
 
         availability = client.get("/api/availability")
         assert availability.status_code == 200

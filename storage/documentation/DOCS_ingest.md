@@ -12,9 +12,16 @@
         python -m storage.manage.space_containers
 
 4. Create the complete spatio-temporal aggregate hierarchy. Every product is
-   divided into blocks using its configured capacity:
+   divided into blocks using its configured capacity. When enabled, the
+   Combined dataset is built first from standardized daily source values and
+   then passed through this same hierarchy:
 
         python -m storage.ingest_data.aggregate_data
+
+   Combined requires an environment containing xESMF and ESMF/ESMPy. Its
+   target grid, daily coverage threshold, eligible variables, source weights,
+   remapping method, and reusable weight-cache directory are configured under
+   `combined_dataset` in **config.yaml**.
 
 
 
@@ -95,6 +102,77 @@ Store blocks by spatial container.
 ## Aggregate data and containers
 We want to have a spatio-temporal hierarchy of pre-aggregated values so we can answer questions faster. Because we want to keep datasets in their native resolutions, we will aggregate, coarsen, the data spatially by a factor of 2 and a factor of 4 (keeping each dataset in its projection), and coarsen the data to any higher temporal resolution out of {Hour, Day, Month, Year}. 
 
+### Combined dataset
+
+For each source dataset:
+
+1. Compute a daily mean on its native grid.
+2. Require sufficient cell-level temporal coverage:
+   - hourly: at least 18 of 24 samples;
+   - three-hourly, including WHOI: at least 6 of 8;
+   - daily: one valid value.
+3. Remap that daily field to the fixed ERA5 grid.
+4. At every ERA5 cell/day, take the equal-weight mean of all valid remapped sources:
+
+$\mathrm{Combined}_{j,t}=\frac{\sum_d m_{d,j,t}x_{d,j,t}}{\sum_d m_{d,j,t}}$
+
+Thus:
+
+- Three available sources with values $2,4,6$ produce `Combined = 4` and `source_count = 3`.
+- One available source with value $5$ produces `Combined = 5` and `source_count = 1`.
+- No available sources produce `NaN` and `source_count = 0`.
+
+One important nuance: CARRA is currently remapped with **bilinear interpolation**. Its contribution is therefore interpolated from nearby CARRA grid centers; it is not an exact area-average of every CARRA cell intersecting the ERA5 cell. Conservative remapping could provide that behavior later.
+
+The fixed base resolution is:
+
+- Spatial: 0.25° ERA5 regular latitude–longitude grid.
+- Temporal: one day.
+
+It is not “0.25 Day”; these are separate spatial and temporal resolutions.
+
+The downstream Combined hierarchy is:
+
+```text
+Combined
+├── Daily
+│   ├── 0.25° Source
+│   ├── 0.5° ×2
+│   └── 1.0° ×4
+├── Monthly
+│   ├── 0.25° Source
+│   ├── 0.5° ×2
+│   └── 1.0° ×4
+└── Yearly
+    ├── 0.25° Source
+    ├── 0.5° ×2
+    └── 1.0° ×4
+```
+
+Monthly and yearly values are calculated from Combined Daily, and their ×2/×4 products use the existing area-weighted spatial pipeline.
+
+So the final domain is the union of valid source coverage **clipped to the canonical ERA5 target grid**. In the current files, that ERA5 grid covers 0–90°N, so datasets outside that target extent cannot extend Combined farther south.
+
+Combined has ERA5’s spatial hierarchy, but not ERA5’s complete temporal hierarchy: Combined begins at Daily and therefore has Daily, Monthly, and Yearly—not Hourly or 3-hourly. Yearly output also requires a complete year; the current January-only data produces Daily and Monthly products but no Yearly product yet.
+
+<!-- For configured compatible scalar variables, each source is first reduced to a
+daily mean on its native grid. A source cell must meet the configured fraction
+of its expected native samples; at the default 75%, hourly data needs 18 of 24
+samples and three-hourly data (including WHOI) needs 6 of 8. Daily fields are
+then remapped to the canonical standardized ERA5 grid and combined using the
+configured source constants. Missing sources do not enter the denominator, so
+one available source is retained outside overlap regions.
+
+Each Combined field stores `source_count`, the number of valid datasets at
+that target cell and day. Cached grid files retain centers, bounds/corners,
+cell areas, CRS metadata, and a static domain mask. Cached xESMF weight files
+and manifests are keyed by source-grid hash, target-grid hash, and remapping
+method. The aligned source fields are not stored.
+
+Combined is a native-daily dataset for the rest of ingestion. Monthly and
+yearly products and the factor-2 and factor-4 spatial pyramids therefore use
+the ordinary aggregation and block-writing paths.
+
 Capacity 2 groups 2×2 capacity-1 containers and capacity 4 groups 4×4
 capacity-1 containers. Their edge definitions are clipped when necessary.
 
@@ -136,4 +214,4 @@ and maximum variables so query results can combine their values correctly.
                           (Capacity-4, M) - ERA5   CARRA       WHOI    EMSST
                           (Capacity-4, Y) - ERA5   CARRA       WHOI    EMSST
 
-```
+``` -->

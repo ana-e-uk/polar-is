@@ -28,6 +28,7 @@ class Settings:
     requests_: Path
     downloaded_data_: Path
     standardized_data_: Path
+    combined_dataset: dict
     # spatial container hierarchy
     container_grid: dict
     container_schemes: dict[str, ContainerScheme]
@@ -70,6 +71,13 @@ def get_settings() -> Settings:
         requests_=PROJECT_ROOT / raw["requests"],
         downloaded_data_=PROJECT_ROOT / raw["downloaded_data"],
         standardized_data_=PROJECT_ROOT / raw["standardized_data"],
+        combined_dataset={
+            **raw.get("combined_dataset", {}),
+            "cache_dir": PROJECT_ROOT
+            / raw.get("combined_dataset", {}).get(
+                "cache_dir", "storage/data/regridding"
+            ),
+        },
         container_grid=raw["container_grid"],
         container_schemes=schemes,
         coarseness_to_spatial_level=coarseness_to_spatial_level,

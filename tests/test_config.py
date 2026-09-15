@@ -21,3 +21,13 @@ def test_mapped_spatial_levels_are_configured_schemes():
 
     for spatial_level in settings.coarseness_to_spatial_level.values():
         assert settings.container_schemes[spatial_level.name] is spatial_level
+
+
+def test_combined_dataset_uses_daily_era5_grid_configuration():
+    combined = get_settings().combined_dataset
+
+    assert combined["dataset"] == "combined"
+    assert combined["target_dataset"] == "era5_single_level"
+    assert combined["temporal_resolution"] == "1D"
+    assert combined["minimum_daily_coverage"] == 0.75
+    assert combined["regridding_method"] == "bilinear"

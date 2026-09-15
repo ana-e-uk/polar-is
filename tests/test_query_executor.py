@@ -8,7 +8,7 @@ import xarray as xr
 from polaris.config import ContainerScheme, get_settings
 from storage.ingest_data.aggregate_data import add_aggregate_statistics
 from storage.ingest_data.make_data_blocks import block_path
-from storage.query_data.executor import execute_query
+from storage.query_data.executor import _cell_corners, execute_query
 
 
 def _query(function, **changes):
@@ -154,6 +154,26 @@ def test_executor_combines_spatial_blocks_with_interleaved_cell_ids(tmp_path):
 
     assert data.sizes == {"timestamp": 2, "cell": 3, "vertex": 4}
     assert set(data["longitude"].values) == {10.0, 30.0, 70.0}
+
+
+def test_rectilinear_bounds_take_precedence_over_stale_projected_crs():
+    data = xr.Dataset(
+        coords={
+            "latitude": ("y", [75.375]),
+            "longitude": ("x", [349.375]),
+            "crs": xr.DataArray(
+                0,
+                attrs={"grid_mapping_name": "lambert_conformal_conic"},
+            ),
+        }
+    )
+    data["latitude_bounds"] = (("y", "bounds"), [[74.875, 75.875]])
+    data["longitude_bounds"] = (("x", "bounds"), [[348.875, 349.875]])
+
+    latitude, longitude = _cell_corners(data, np.asarray([0]))
+
+    np.testing.assert_allclose(latitude, [[74.875, 74.875, 75.875, 75.875]])
+    np.testing.assert_allclose(longitude, [[348.875, 349.875, 349.875, 348.875]])
 
 
 def test_executor_computes_all_four_derived_functions(tmp_path):
