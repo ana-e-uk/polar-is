@@ -7,6 +7,7 @@ export type Region = {
 
 export type Dataset = {
   name: string;
+  display_name?: string | null;
   variables: string[];
   additional_parameters: Record<string, Array<string | number>>;
   temporal_sampling: string[];

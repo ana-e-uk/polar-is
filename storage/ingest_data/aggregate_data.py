@@ -196,9 +196,11 @@ def temporally_aggregate(
         if name == variable or name in AGGREGATE_STATISTICS:
             continue
         if "timestamp" in array.dims:
-            result[name] = array.resample(
-                timestamp=_XR_FREQUENCY[target]
-            ).first(keep_attrs=True)
+            auxiliary = array.resample(timestamp=_XR_FREQUENCY[target])
+            if name == "source_count":
+                result[name] = auxiliary.mean(skipna=True, keep_attrs=True)
+            else:
+                result[name] = auxiliary.first(keep_attrs=True)
         else:
             result[name] = array
     if has_statistics:
@@ -632,9 +634,13 @@ def aggregate_standardized_metadata() -> list[dict]:
     """Run the hierarchy and consume its standardized inputs on success."""
     settings = get_settings()
     records = read_metadata(settings.standardized_data_)
-    written = aggregate_records(records, settings=settings, delete_sources=False)
+    from storage.ingest_data.combine_data import build_combined_records
+
+    combined_records = build_combined_records(records, settings=settings)
+    all_records = [*records, *combined_records]
+    written = aggregate_records(all_records, settings=settings, delete_sources=False)
     _clear_metadata_atomically(settings.standardized_data_)
-    for record in records:
+    for record in all_records:
         Path(record["file_path"]).unlink()
     return written
 

@@ -281,6 +281,7 @@ def _catalog(settings: Settings) -> dict[str, Any]:
             datasets.append(
                 {
                     "name": dataset_name,
+                    "display_name": definition.get("display_name"),
                     "variables": sorted(set(definition.get("variables", {}).values())),
                     "additional_parameters": definition.get(
                         "additional_parameters", {}

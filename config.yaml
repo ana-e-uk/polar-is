@@ -11,6 +11,22 @@ requests: storage/data/tmp/requests.csv
 downloaded_data: storage/data/tmp/downloaded/downloaded_data.jsonl
 standardized_data: storage/data/tmp/standardized/standardized_metadata.jsonl
 
+############ combined dataset ###########
+combined_dataset:
+  enabled: true
+  repository: polaris
+  dataset: combined
+  display_name: Combined — weighted mean of available datasets
+  target_repository: copernicusclimatedatastore
+  target_dataset: era5_single_level
+  temporal_resolution: 1D
+  minimum_daily_coverage: 0.75
+  regridding_method: bilinear
+  cache_dir: storage/data/regridding
+  variables: [sea_surface_temperature]
+  default_weight: 1.0
+  weights: {}
+
 ############ canonical spatial container grid ###########
 container_grid:
   lon_min: 0
@@ -44,7 +60,8 @@ coarseness_to_spatial_level:
 temporal_aggregation_resolutions: [1H, 3H, 1D, 1MS, 1YS]
 
 # Values accepted by storage queries. These are separate from the ingestion
-# reducers below, which describe how each scientific variable is coarsened.
+# reducers below (aggregation methods), which describe how each scientific
+# variable is coarsened.
 supported_query_functions: [timeseries, heatmap, find-time, find-area, get-data]
 function_aggregation_methods: [mean, min, max]
 
@@ -52,6 +69,7 @@ function_aggregation_methods: [mean, min, max]
 name_docs: {
   "copernicusclimatedatastore": {
     "era5_single_level": {
+      "display_name": "ERA5 Single Levels",
       "grid": {
         "type": "rectilinear",
         "name": "regular",
@@ -65,6 +83,7 @@ name_docs: {
       "temporal_sampling": ["1H"]
     },
     "carra_height": {
+      "display_name": "CARRA Height Levels",
       "grid": {
         "type": "projected",
         "name": "lambert-conformal",
@@ -83,6 +102,7 @@ name_docs: {
   "nasaearthdata": {},
   "noaancei": {
     "emsst": {
+      "display_name": "EMSST Acession 0187983",
       "grid": {
         "type": "rectilinear",
         "name": "regular",
@@ -96,6 +116,7 @@ name_docs: {
       "temporal_sampling": ["1D"]
     },
     "whoi_cdr": {
+      "display_name": "WHOI Climate Data Record SST V.2",
       "grid": {
         "type": "rectilinear",
         "name": "regular",
@@ -108,9 +129,37 @@ name_docs: {
       "additional_parameters": {},
       "temporal_sampling": ["3H"]
     }
+  },
+  "polaris": {
+    "combined": {
+      "display_name": "Weighted mean of available datasets",
+      "grid": {
+        "type": "rectilinear",
+        "name": "era5-regular-latitude-longitude",
+        "resolution": [0.25],
+        "units": "degrees"
+      },
+      "variables": {
+        "sea_surface_temperature": "sea_surface_temperature"
+      },
+      "additional_parameters": {},
+      "temporal_sampling": ["1D"]
+    }
   }
 }
 
+frontend_titles:
+  repository: {
+    "display_name": "Copernicus Climate Data Store",
+    "display_name": "NASA Earthdata",
+    "display_name": "NOAA National Centers for Environmental Information",
+    "display_name": "Combined datasets"
+  }
+  variable: {
+    "sea_surface_temperature": "Sea Surface Temperature"
+  }
+
+# Ingestion reducers describing how each scientific variable is coarsened.
 aggregation_methods:
   sea_surface_temperature:
     temporal: mean

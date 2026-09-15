@@ -63,7 +63,7 @@ export default function QueryControls({ catalog, form, onChange, onSubmit, onSho
       </div>
       <div className="control-grid">
         <label>Repository<select value={form.repository} onChange={(e) => changeRepository(e.target.value)}><option value="">Any</option>{repositories.map((item) => <option key={item.name} value={item.name}>{label(item.name)}</option>)}</select></label>
-        <label>Dataset<select value={form.dataset} onChange={(e) => changeDataset(e.target.value)}><option value="">Any</option>{datasets.map((item) => <option key={item.name} value={item.name}>{label(item.name)}</option>)}</select></label>
+        <label>Dataset<select value={form.dataset} onChange={(e) => changeDataset(e.target.value)}><option value="">Any</option>{datasets.map((item) => <option key={item.name} value={item.name}>{item.display_name ?? label(item.name)}</option>)}</select></label>
         <label>Variable<select required value={form.variable} onChange={(e) => onChange({ ...form, variable: e.target.value })}><option value="">Select variable</option>{variables.map((item) => <option key={item} value={item}>{label(item)}</option>)}</select></label>
         {selectedDataset && <AdditionalParameters dataset={selectedDataset} form={form} onChange={onChange} />}
         <label>Start<input type="date" required value={form.time_start} onChange={(e) => onChange({ ...form, time_start: e.target.value })} /></label>

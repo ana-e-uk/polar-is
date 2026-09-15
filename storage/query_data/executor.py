@@ -172,6 +172,21 @@ def _cell_corners(
     y_indices, x_indices = np.unravel_index(
         cell_indices, (data.sizes["y"], data.sizes["x"])
     )
+    # Explicit geographic bounds are authoritative for a rectilinear grid.
+    # Check them before projected CRS metadata so a stale auxiliary CRS cannot
+    # rotate otherwise regular latitude/longitude cells.
+    if "latitude_bounds" in data and "longitude_bounds" in data:
+        latitude_bounds = np.asarray(data["latitude_bounds"].values)[y_indices]
+        longitude_bounds = np.asarray(data["longitude_bounds"].values)[x_indices]
+        south = np.min(latitude_bounds, axis=1)
+        north = np.max(latitude_bounds, axis=1)
+        west = np.min(longitude_bounds, axis=1)
+        east = np.max(longitude_bounds, axis=1)
+        return (
+            np.column_stack((south, south, north, north)),
+            np.column_stack((west, east, east, west)) % 360,
+        )
+
     transformer = transformer_from_grid_mapping(data)
     if transformer is not None:
         crs = data["crs"].attrs
@@ -197,18 +212,6 @@ def _cell_corners(
         projected_y = np.column_stack((south, south, north, north))
         longitude, latitude = transformer.transform(projected_x, projected_y)
         return np.asarray(latitude), np.asarray(longitude) % 360
-
-    if "latitude_bounds" in data and "longitude_bounds" in data:
-        latitude_bounds = np.asarray(data["latitude_bounds"].values)[y_indices]
-        longitude_bounds = np.asarray(data["longitude_bounds"].values)[x_indices]
-        south = np.min(latitude_bounds, axis=1)
-        north = np.max(latitude_bounds, axis=1)
-        west = np.min(longitude_bounds, axis=1)
-        east = np.max(longitude_bounds, axis=1)
-        return (
-            np.column_stack((south, south, north, north)),
-            np.column_stack((west, east, east, west)) % 360,
-        )
 
     vertex_latitude, vertex_longitude = _inferred_curvilinear_vertices(data)
     latitude = np.column_stack(
