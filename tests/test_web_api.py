@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from api.interface.app import api_settings, app
+from api.interface.app import _grid_mapping, api_settings, app
 from polaris.config import ContainerScheme, get_settings
 from storage.ingest_data.aggregate_data import add_aggregate_statistics
 from storage.ingest_data.make_data_blocks import block_path
@@ -105,6 +105,15 @@ def test_catalog_and_timeseries_query_boundary(tmp_path):
         catalog = client.get("/api/catalog")
         assert catalog.status_code == 200
         assert catalog.json()["coarseness_factors"] == [1]
+        assert catalog.json()["frontend_titles"] == settings.frontend_titles
+        noaa = next(
+            repository
+            for repository in catalog.json()["repositories"]
+            if repository["name"] == "noaancei"
+        )
+        assert noaa["display_name"] == (
+            "NOAA National Centers for Environmental Information"
+        )
         combined = next(
             dataset
             for repository in catalog.json()["repositories"]
@@ -201,3 +210,28 @@ def test_heatmap_query_returns_plot_ready_coordinates(tmp_path):
         }
     finally:
         app.dependency_overrides.clear()
+
+
+def test_grid_mapping_serializes_cf_lambert_parameters():
+    data = xr.Dataset(
+        {"value": ("cell", [1.0], {"grid_mapping": "crs"})},
+        coords={
+            "crs": xr.DataArray(
+                np.int8(0),
+                attrs={
+                    "grid_mapping_name": "lambert_conformal_conic",
+                    "standard_parallel": np.asarray([72.0, 72.0]),
+                    "longitude_of_central_meridian": -36.0,
+                    "latitude_of_projection_origin": 72.0,
+                    "crs_wkt": "intentionally omitted from the browser payload",
+                },
+            )
+        },
+    )
+
+    assert _grid_mapping(data, "value") == {
+        "grid_mapping_name": "lambert_conformal_conic",
+        "standard_parallel": [72.0, 72.0],
+        "longitude_of_central_meridian": -36.0,
+        "latitude_of_projection_origin": 72.0,
+    }

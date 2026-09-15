@@ -5,6 +5,7 @@ import PlotPanel from "./PlotPanel";
 import QueryControls from "./QueryControls";
 import RegionPicker from "./RegionPicker";
 import type { AvailabilityRow, Catalog, QueryForm, QueryResult } from "./types";
+import { datasetName, spatialResolutionTitle, variableTitle } from "./titles";
 
 const initialForm: QueryForm = {
   repository: "",
@@ -47,6 +48,18 @@ export default function App() {
     if (!result) return [];
     return Array.from(new Set([...result.warnings, ...result.groups.flatMap((group) => group.warnings)]));
   }, [result]);
+  const selectedDataset = catalog && form.dataset
+    ? (form.repository
+      ? catalog.repositories
+        .find((repository) => repository.name === form.repository)
+        ?.datasets.find((dataset) => dataset.name === form.dataset)
+      : catalog.repositories
+        .flatMap((repository) => repository.datasets)
+        .find((dataset) => dataset.name === form.dataset))
+    : undefined;
+  const displayedVariable = catalog && form.variable
+    ? variableTitle(catalog, form.variable)
+    : "Choose a variable";
 
   async function submit() {
     setError("");
@@ -100,21 +113,21 @@ export default function App() {
         <div className="primary-column">
           {showMap ? <RegionPicker region={form.region} onChange={(region) => setForm({ ...form, region })} /> : (
             <div className="result-wrap">
-              <div className="result-heading"><div><p className="eyebrow">Query result</p><h2>{form.variable.replaceAll("_", " ")}</h2></div><button className="secondary-button" onClick={() => setShowMap(true)}>Change region</button></div>
-              <PlotPanel result={result} loading={loading} />
+              <div className="result-heading"><div><p className="eyebrow">Query result</p><h2>{displayedVariable}</h2></div><button className="secondary-button" onClick={() => setShowMap(true)}>Change region</button></div>
+              {catalog && <PlotPanel result={result} loading={loading} catalog={catalog} />}
             </div>
           )}
         </div>
         <aside className="side-column">
-          <section className="summary-card"><p className="eyebrow">Current selection</p><h2>{form.variable ? form.variable.replaceAll("_", " ") : "Choose a variable"}</h2><dl><div><dt>Function</dt><dd>{form.function}</dd></div><div><dt>Resolution</dt><dd>{form.coarseness_factor === 1 ? "Source" : `Coarsen-${form.coarseness_factor}`} · {form.time_unit}</dd></div><div><dt>Dates</dt><dd>{form.time_start} — {form.time_end}</dd></div></dl></section>
-          {result?.groups.map((group) => <section className="download-card" key={group.group_id}><div><strong>{group.source.dataset}</strong><span>{group.coverage.hit_count.toLocaleString()} covered cells</span></div><a href={group.download_url}>Download NetCDF</a></section>)}
+          <section className="summary-card"><p className="eyebrow">Current selection</p><h2>{displayedVariable}</h2><dl><div><dt>Function</dt><dd>{form.function}</dd></div><div><dt>Resolution</dt><dd>{catalog ? spatialResolutionTitle(catalog, selectedDataset, form.coarseness_factor) : "—"} · {form.time_unit}</dd></div><div><dt>Dates</dt><dd>{form.time_start} — {form.time_end}</dd></div></dl></section>
+          {result?.groups.map((group) => <section className="download-card" key={group.group_id}><div><strong>{catalog ? datasetName(catalog, group.source.repository, group.source.dataset) : group.source.dataset}</strong><span>{group.coverage.hit_count.toLocaleString()} covered cells</span></div><a href={group.download_url}>Download NetCDF</a></section>)}
           {warnings.length > 0 && <section className="warnings" aria-live="polite"><h2>Coverage notes</h2><ul>{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section>}
         </aside>
         <div className="controls-row">
           {catalog ? <QueryControls catalog={catalog} form={form} onChange={setForm} onSubmit={submit} onShowAvailability={openAvailability} loading={loading} /> : <section className="controls-panel state-panel"><div className="spinner" /><p>Loading available data…</p></section>}
         </div>
       </div>
-      {showAvailability && <AvailabilityTable rows={availability} loading={availabilityLoading} error={availabilityError} onClose={() => setShowAvailability(false)} />}
+      {showAvailability && catalog && <AvailabilityTable rows={availability} loading={availabilityLoading} error={availabilityError} catalog={catalog} onClose={() => setShowAvailability(false)} />}
     </main>
   );
 }

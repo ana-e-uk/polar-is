@@ -79,6 +79,37 @@ def _integer_coordinate(data: xr.Dataset, name: str) -> list[int]:
     return [int(value) for value in data[name].values]
 
 
+def _grid_mapping(data: xr.Dataset, variable: str) -> dict[str, Any] | None:
+    """Return the compact CF projection definition needed by the browser."""
+    mapping_name = data[variable].attrs.get("grid_mapping")
+    if not mapping_name or mapping_name not in data:
+        return None
+    attributes = data[mapping_name].attrs
+    keys = (
+        "grid_mapping_name",
+        "standard_parallel",
+        "longitude_of_central_meridian",
+        "latitude_of_projection_origin",
+        "false_easting",
+        "false_northing",
+        "earth_radius",
+        "semi_major_axis",
+        "inverse_flattening",
+    )
+    mapping: dict[str, Any] = {}
+    for key in keys:
+        if key not in attributes:
+            continue
+        value = attributes[key]
+        if isinstance(value, np.ndarray):
+            mapping[key] = value.tolist()
+        elif isinstance(value, np.generic):
+            mapping[key] = value.item()
+        else:
+            mapping[key] = value
+    return mapping or None
+
+
 def _display_longitude(value: Any) -> float | None:
     number = _json_number(value)
     return None if number is None else ((number + 180) % 360) - 180
@@ -174,6 +205,7 @@ def _serialize_group(
             "miss_count": len(group.miss_set),
         },
         "grid": dataset_definition.get("grid"),
+        "grid_mapping": _grid_mapping(group.data, group.source.variable),
         "coarseness_factor": int(group.data.attrs["coarseness_factor"]),
         "download_url": (
             f"/api/results/{result.query_id}/{result.function}/"
@@ -274,6 +306,7 @@ def _availability(settings: Settings) -> list[dict[str, Any]]:
 
 
 def _catalog(settings: Settings) -> dict[str, Any]:
+    repository_titles = settings.frontend_titles.get("repository", {})
     repositories = []
     for repository_name, dataset_definitions in settings.name_docs.items():
         datasets = []
@@ -290,9 +323,16 @@ def _catalog(settings: Settings) -> dict[str, Any]:
                     "grid": definition.get("grid"),
                 }
             )
-        repositories.append({"name": repository_name, "datasets": datasets})
+        repositories.append(
+            {
+                "name": repository_name,
+                "display_name": repository_titles.get(repository_name),
+                "datasets": datasets,
+            }
+        )
     return {
         "repositories": repositories,
+        "frontend_titles": settings.frontend_titles,
         "coarseness_factors": sorted(settings.coarseness_to_spatial_level),
         "time_units": list(TIME_UNITS),
         "functions": list(settings.supported_query_functions),

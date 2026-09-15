@@ -38,6 +38,7 @@ class Settings:
     function_aggregation_methods: tuple[str, ...]
     # dictionaries
     name_docs: dict
+    frontend_titles: dict
     aggregation_methods: dict
 
 @lru_cache
@@ -89,5 +90,6 @@ def get_settings() -> Settings:
             raw["function_aggregation_methods"]
         ),
         name_docs=raw.get("name_docs", {}),
+        frontend_titles=raw.get("frontend_titles", {}),
         aggregation_methods=raw["aggregation_methods"],
     )

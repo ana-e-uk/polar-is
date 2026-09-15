@@ -1,4 +1,5 @@
 import type { Catalog, Dataset, QueryForm, Region } from "./types";
+import { fallbackTitle, repositoryTitle, spatialResolutionTitle, variableTitle } from "./titles";
 
 type Props = {
   catalog: Catalog;
@@ -8,9 +9,6 @@ type Props = {
   onShowAvailability: () => void;
   loading: boolean;
 };
-
-const label = (value: string) =>
-  value.replaceAll("_", " ").replaceAll("-", " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
 export default function QueryControls({ catalog, form, onChange, onSubmit, onShowAvailability, loading }: Props) {
   const repositories = catalog.repositories.filter((item) => item.datasets.length > 0);
@@ -62,16 +60,16 @@ export default function QueryControls({ catalog, form, onChange, onSubmit, onSho
         </div>
       </div>
       <div className="control-grid">
-        <label>Repository<select value={form.repository} onChange={(e) => changeRepository(e.target.value)}><option value="">Any</option>{repositories.map((item) => <option key={item.name} value={item.name}>{label(item.name)}</option>)}</select></label>
-        <label>Dataset<select value={form.dataset} onChange={(e) => changeDataset(e.target.value)}><option value="">Any</option>{datasets.map((item) => <option key={item.name} value={item.name}>{item.display_name ?? label(item.name)}</option>)}</select></label>
-        <label>Variable<select required value={form.variable} onChange={(e) => onChange({ ...form, variable: e.target.value })}><option value="">Select variable</option>{variables.map((item) => <option key={item} value={item}>{label(item)}</option>)}</select></label>
+        <label>Repository<select value={form.repository} onChange={(e) => changeRepository(e.target.value)}><option value="">Any</option>{repositories.map((item) => <option key={item.name} value={item.name}>{repositoryTitle(item)}</option>)}</select></label>
+        <label>Dataset<select value={form.dataset} onChange={(e) => changeDataset(e.target.value)}><option value="">Any</option>{datasets.map((item) => <option key={item.name} value={item.name}>{item.display_name ?? fallbackTitle(item.name)}</option>)}</select></label>
+        <label>Variable<select required value={form.variable} onChange={(e) => onChange({ ...form, variable: e.target.value })}><option value="">Select variable</option>{variables.map((item) => <option key={item} value={item}>{variableTitle(catalog, item)}</option>)}</select></label>
         {selectedDataset && <AdditionalParameters dataset={selectedDataset} form={form} onChange={onChange} />}
         <label>Start<input type="date" required value={form.time_start} onChange={(e) => onChange({ ...form, time_start: e.target.value })} /></label>
         <label>End<input type="date" required value={form.time_end} onChange={(e) => onChange({ ...form, time_end: e.target.value })} /></label>
-        <label>Spatial resolution<select value={form.coarseness_factor} onChange={(e) => onChange({ ...form, coarseness_factor: Number(e.target.value) })}>{catalog.coarseness_factors.map((item) => <option key={item} value={item}>{item === 1 ? "Source" : `Coarsen-${item}`}</option>)}</select></label>
+        <label>Spatial resolution<select value={form.coarseness_factor} onChange={(e) => onChange({ ...form, coarseness_factor: Number(e.target.value) })}>{catalog.coarseness_factors.map((item) => <option key={item} value={item}>{spatialResolutionTitle(catalog, selectedDataset, item)}</option>)}</select></label>
         <label>Time resolution<select value={form.time_unit} onChange={(e) => onChange({ ...form, time_unit: e.target.value })}>{catalog.time_units.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-        <label>Function<select value={form.function} onChange={(e) => onChange({ ...form, function: e.target.value })}>{catalog.functions.map((item) => <option key={item} value={item}>{label(item)}</option>)}</select></label>
-        <label>Aggregation<select value={form.aggregation_method} onChange={(e) => onChange({ ...form, aggregation_method: e.target.value })}>{catalog.aggregation_methods.map((item) => <option key={item} value={item}>{label(item)}</option>)}</select></label>
+        <label>Function<select value={form.function} onChange={(e) => onChange({ ...form, function: e.target.value })}>{catalog.functions.map((item) => <option key={item} value={item}>{fallbackTitle(item)}</option>)}</select></label>
+        <label>Aggregation<select value={form.aggregation_method} onChange={(e) => onChange({ ...form, aggregation_method: e.target.value })}>{catalog.aggregation_methods.map((item) => <option key={item} value={item}>{fallbackTitle(item)}</option>)}</select></label>
         {(form.function === "find-time" || form.function === "find-area") && <>
           <label>Predicate<select value={form.predicate} onChange={(e) => onChange({ ...form, predicate: e.target.value })}><option value="gt">Greater than (&gt;)</option><option value="ge">Greater than or equal (≥)</option><option value="lt">Less than (&lt;)</option><option value="le">Less than or equal (≤)</option><option value="eq">Equal (=)</option><option value="ne">Not equal (≠)</option></select></label>
           <label>Filter value<input type="number" required step="any" value={form.filter_value} onChange={(e) => onChange({ ...form, filter_value: e.target.value })} placeholder="Enter a value" /></label>
@@ -80,7 +78,7 @@ export default function QueryControls({ catalog, form, onChange, onSubmit, onSho
       <fieldset className="bounds-grid">
         <legend>Region bounds</legend>
         {(["north", "south", "west", "east"] as const).map((name) => (
-          <label key={name}>{label(name)}<input type="number" min={name === "north" || name === "south" ? -90 : -180} max={name === "north" || name === "south" ? 90 : 180} step="0.001" value={form.region[name]} onChange={(e) => changeRegion(name, e.target.value)} /></label>
+          <label key={name}>{fallbackTitle(name)}<input type="number" min={name === "north" || name === "south" ? -90 : -180} max={name === "north" || name === "south" ? 90 : 180} step="0.001" value={form.region[name]} onChange={(e) => changeRegion(name, e.target.value)} /></label>
         ))}
       </fieldset>
       <div className="control-actions">
@@ -95,6 +93,6 @@ export default function QueryControls({ catalog, form, onChange, onSubmit, onSho
 
 function AdditionalParameters({ dataset, form, onChange }: { dataset: Dataset; form: QueryForm; onChange: (form: QueryForm) => void }) {
   return <>{Object.entries(dataset.additional_parameters).map(([name, options]) => (
-    <label key={name}>{label(name)}<select value={String(form.additional_parameters[name] ?? "")} onChange={(e) => onChange({ ...form, additional_parameters: { ...form.additional_parameters, [name]: e.target.value } })}>{options.map((item) => <option key={String(item)} value={String(item)}>{label(String(item))}</option>)}</select></label>
+    <label key={name}>{fallbackTitle(name)}<select value={String(form.additional_parameters[name] ?? "")} onChange={(e) => onChange({ ...form, additional_parameters: { ...form.additional_parameters, [name]: e.target.value } })}>{options.map((item) => <option key={String(item)} value={String(item)}>{fallbackTitle(String(item))}</option>)}</select></label>
   ))}</>;
 }

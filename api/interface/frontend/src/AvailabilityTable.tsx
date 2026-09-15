@@ -1,21 +1,20 @@
-import type { AvailabilityRow } from "./types";
+import type { AvailabilityRow, Catalog } from "./types";
+import { datasetName, fallbackTitle, repositoryName, variableTitle } from "./titles";
 
 type Props = {
   rows: AvailabilityRow[];
   loading: boolean;
   error: string;
+  catalog: Catalog;
   onClose: () => void;
 };
 
-const label = (value: string) =>
-  value.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
-
 const parameters = (values: Record<string, unknown>) =>
   Object.entries(values)
-    .map(([name, value]) => `${label(name)}: ${String(value)}`)
+    .map(([name, value]) => `${fallbackTitle(name)}: ${String(value)}`)
     .join(", ") || "—";
 
-export default function AvailabilityTable({ rows, loading, error, onClose }: Props) {
+export default function AvailabilityTable({ rows, loading, error, catalog, onClose }: Props) {
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
       <section
@@ -42,8 +41,8 @@ export default function AvailabilityTable({ rows, loading, error, onClose }: Pro
               <tbody>
                 {rows.map((row, index) => (
                   <tr key={`${row.repository}-${row.dataset}-${row.variable}-${index}`}>
-                    <td><strong>{label(row.repository)}</strong><span>{label(row.dataset)}</span></td>
-                    <td>{label(row.variable)}</td>
+                    <td><strong>{repositoryName(catalog, row.repository)}</strong><span>{datasetName(catalog, row.repository, row.dataset)}</span></td>
+                    <td>{variableTitle(catalog, row.variable)}</td>
                     <td>{parameters(row.additional_parameters)}</td>
                     <td>{row.region.west}, {row.region.east}, {row.region.south}, {row.region.north}</td>
                     <td>{row.time_start.slice(0, 10)}<span>through {row.time_end.slice(0, 10)}</span></td>

@@ -35,6 +35,17 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .map-actions { display: flex; align-items: center; gap: 12px; }
 .result-panel { height: calc(100% - 66px); background: white; }
 .plot { width: 100%; height: 100%; }
+.spatial-result-panel { overflow: auto; container: spatial-results / inline-size; }
+.spatial-plot-grid { min-height: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 12px; padding: 12px; }
+.spatial-plot-card { min-width: 0; min-height: 390px; display: flex; flex-direction: column; overflow: hidden; background: #fff; border: 1px solid #d8e3ea; border-radius: 7px; }
+.spatial-plot-heading { flex: none; min-height: 53px; padding: 10px 13px; border-bottom: 1px solid #e1e9ee; }
+.spatial-plot-heading h3 { margin: 0; color: #213f54; font-size: .88rem; font-weight: 700; }
+.spatial-plot-heading p { margin: 3px 0 0; color: #708493; font-size: .7rem; }
+.spatial-plot { width: 100%; min-height: 335px; flex: 1; }
+
+@container spatial-results (max-width: 850px) {
+  .spatial-plot-grid { grid-template-columns: 1fr; }
+}
 
 .controls-panel { padding: 14px 16px 16px; }
 .controls-panel .panel-heading { min-height: auto; padding: 0 0 12px; border: 0; }

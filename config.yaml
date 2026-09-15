@@ -150,13 +150,25 @@ name_docs: {
 
 frontend_titles:
   repository: {
-    "display_name": "Copernicus Climate Data Store",
-    "display_name": "NASA Earthdata",
-    "display_name": "NOAA National Centers for Environmental Information",
-    "display_name": "Combined datasets"
+    "copernicusclimatedatastore": "Copernicus Climate Data Store",
+    "nasaearthdata": "NASA Earthdata",
+    "noaancei": "NOAA National Centers for Environmental Information",
+    "polaris": "Combined datasets"
   }
   variable: {
     "sea_surface_temperature": "Sea Surface Temperature"
+  }
+  resolution: {
+    "0.25": {
+      "source": [0.25],
+      "coarsen-2": [0.5],
+      "coarsen-4": [1.0]
+    },
+    "2.5": {
+      "source": [2.5],
+      "coarsen-2": [5.0],
+      "coarsen-4": [10.0]
+    }
   }
 
 # Ingestion reducers describing how each scientific variable is coarsened.
