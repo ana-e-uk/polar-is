@@ -22,10 +22,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+plot = [
+  "cartopy>=0.24,<1",
+  "matplotlib>=3.9,<4",
+]
 test = [
   "httpx>=0.28,<1",
   "pytest>=8,<10",
 ]
+
+[project.scripts]
+polar-is = "api.command_line.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["api*", "polaris*", "storage*"]

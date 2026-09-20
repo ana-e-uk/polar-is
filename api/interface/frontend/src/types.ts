@@ -11,16 +11,31 @@ export type Dataset = {
   variables: string[];
   additional_parameters: Record<string, Array<string | number>>;
   temporal_sampling: string[];
-  grid: Record<string, unknown> | null;
+  grid: GridDefinition | null;
 };
 
 export type Repository = {
   name: string;
+  display_name?: string | null;
   datasets: Dataset[];
+};
+
+export type GridDefinition = {
+  type?: string;
+  name?: string;
+  resolution?: Array<number | string>;
+  units?: string;
+};
+
+export type FrontendTitles = {
+  repository?: Record<string, string>;
+  variable?: Record<string, string>;
+  resolution?: Record<string, Record<string, Array<number | string>>>;
 };
 
 export type Catalog = {
   repositories: Repository[];
+  frontend_titles: FrontendTitles;
   coarseness_factors: number[];
   time_units: string[];
   functions: string[];
@@ -101,11 +116,17 @@ export type ResultGroup = {
     variable: string;
     additional_parameters: Record<string, unknown>;
   };
-  grid: {
-    type?: string;
-    name?: string;
-    resolution?: number[];
-    units?: string;
+  grid: GridDefinition | null;
+  grid_mapping: {
+    grid_mapping_name?: string;
+    standard_parallel?: number | number[];
+    longitude_of_central_meridian?: number;
+    latitude_of_projection_origin?: number;
+    false_easting?: number;
+    false_northing?: number;
+    earth_radius?: number;
+    semi_major_axis?: number;
+    inverse_flattening?: number;
   } | null;
   coarseness_factor: number;
   units: string | null;
@@ -121,4 +142,20 @@ export type QueryResult = {
   warnings: string[];
   unmatched_miss_count: number;
   groups: ResultGroup[];
+};
+
+export type QueryJob = {
+  job_id: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "expired";
+  status_url: string;
+  result?: QueryResult;
+  error?: { code: string; message: string };
+  jobs_ahead?: number;
+};
+
+export type ServiceStatus = {
+  access_mode: "anonymous" | "token";
+  running_jobs: number;
+  queued_jobs: number;
+  queue_capacity: number;
 };

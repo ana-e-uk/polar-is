@@ -1,15 +1,28 @@
 from dataclasses import replace
 import json
+import time
 
 from fastapi.testclient import TestClient
 import numpy as np
 import pandas as pd
+import pytest
 import xarray as xr
 
-from api.interface.app import api_settings, app
+from api.interface.app import (
+    _grid_mapping,
+    api_settings,
+    app,
+    validate_access_configuration,
+)
 from polaris.config import ContainerScheme, get_settings
+from polaris.services.job_service import job_service
 from storage.ingest_data.aggregate_data import add_aggregate_statistics
 from storage.ingest_data.make_data_blocks import block_path
+
+
+@pytest.fixture(autouse=True)
+def _explicit_anonymous_access(monkeypatch):
+    monkeypatch.setenv("POLARIS_ACCESS_MODE", "anonymous")
 
 
 def _settings(tmp_path):
@@ -100,11 +113,21 @@ def _query():
 def test_catalog_and_timeseries_query_boundary(tmp_path):
     settings = _settings(tmp_path)
     app.dependency_overrides[api_settings] = lambda: settings
+    job_service.clear()
     try:
         client = TestClient(app)
         catalog = client.get("/api/catalog")
         assert catalog.status_code == 200
         assert catalog.json()["coarseness_factors"] == [1]
+        assert catalog.json()["frontend_titles"] == settings.frontend_titles
+        noaa = next(
+            repository
+            for repository in catalog.json()["repositories"]
+            if repository["name"] == "noaancei"
+        )
+        assert noaa["display_name"] == (
+            "NOAA National Centers for Environmental Information"
+        )
         combined = next(
             dataset
             for repository in catalog.json()["repositories"]
@@ -136,9 +159,12 @@ def test_catalog_and_timeseries_query_boundary(tmp_path):
             }
         ]
 
-        response = client.post("/api/queries", json=_query())
-        assert response.status_code == 200
-        body = response.json()
+        response = client.post(
+            "/api/v1/jobs",
+            json={"query": _query(), "outputs": ["plot-json", "netcdf"]},
+        )
+        assert response.status_code == 202
+        body = _wait_for_job(client, response.json()["job_id"])["result"]
         assert body["function"] == "timeseries"
         assert len(body["groups"]) == 1
         group = body["groups"][0]
@@ -156,6 +182,7 @@ def test_catalog_and_timeseries_query_boundary(tmp_path):
         assert download.content
     finally:
         app.dependency_overrides.clear()
+        job_service.clear()
 
 
 def test_invalid_query_is_reported_as_validation_error(tmp_path):
@@ -163,8 +190,14 @@ def test_invalid_query_is_reported_as_validation_error(tmp_path):
     app.dependency_overrides[api_settings] = lambda: settings
     try:
         response = TestClient(app).post(
-            "/api/queries",
-            json={**_query(), "region": {"west": 40, "east": 0, "south": 0, "north": 20}},
+            "/api/v1/jobs",
+            json={
+                "query": {
+                    **_query(),
+                    "region": {"west": 40, "east": 0, "south": 0, "north": 20},
+                },
+                "outputs": ["plot-json"],
+            },
         )
         assert response.status_code == 422
         assert "west < east" in response.json()["detail"]
@@ -175,16 +208,22 @@ def test_invalid_query_is_reported_as_validation_error(tmp_path):
 def test_heatmap_query_returns_plot_ready_coordinates(tmp_path):
     settings = _settings(tmp_path)
     app.dependency_overrides[api_settings] = lambda: settings
+    job_service.clear()
     try:
-        response = TestClient(app).post(
-            "/api/queries",
-            json={**_query(), "function": "heatmap"},
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/jobs",
+            json={
+                "query": {**_query(), "function": "heatmap"},
+                "outputs": ["plot-json", "png"],
+            },
         )
-        assert response.status_code == 200
-        data = response.json()["groups"][0]["data"]
+        assert response.status_code == 202
+        result = _wait_for_job(client, response.json()["job_id"])["result"]
+        data = result["groups"][0]["data"]
         assert data == {
             "kind": "heatmap",
-            "cell_ids": [response.json()["groups"][0]["group_id"] + ":c1:40:80"],
+            "cell_ids": [result["groups"][0]["group_id"] + ":c1:40:80"],
             "latitudes": [10.0],
             "longitudes": [20.0],
             "source_y_indices": [40],
@@ -199,5 +238,202 @@ def test_heatmap_query_returns_plot_ready_coordinates(tmp_path):
             "corner_longitudes": [[19.875, 20.125, 20.125, 19.875]],
             "values": [281.0],
         }
+        completed = _wait_for_job(client, response.json()["job_id"])
+        png = client.get(completed["groups"][0]["png_url"])
+        assert png.status_code == 200
+        assert png.content.startswith(b"\x89PNG\r\n\x1a\n")
     finally:
         app.dependency_overrides.clear()
+        job_service.clear()
+
+
+def test_grid_mapping_serializes_cf_lambert_parameters():
+    data = xr.Dataset(
+        {"value": ("cell", [1.0], {"grid_mapping": "crs"})},
+        coords={
+            "crs": xr.DataArray(
+                np.int8(0),
+                attrs={
+                    "grid_mapping_name": "lambert_conformal_conic",
+                    "standard_parallel": np.asarray([72.0, 72.0]),
+                    "longitude_of_central_meridian": -36.0,
+                    "latitude_of_projection_origin": 72.0,
+                    "crs_wkt": "intentionally omitted from the browser payload",
+                },
+            )
+        },
+    )
+
+    assert _grid_mapping(data, "value") == {
+        "grid_mapping_name": "lambert_conformal_conic",
+        "standard_parallel": [72.0, 72.0],
+        "longitude_of_central_meridian": -36.0,
+        "latitude_of_projection_origin": 72.0,
+    }
+
+
+def _wait_for_job(client, job_id):
+    for _ in range(1000):
+        response = client.get(f"/api/v1/jobs/{job_id}")
+        assert response.status_code == 200
+        body = response.json()
+        if body["status"] in {"completed", "failed"}:
+            return body
+        time.sleep(0.02)
+    raise AssertionError("job did not finish")
+
+
+def test_async_job_returns_plot_json_and_netcdf(tmp_path):
+    settings = _settings(tmp_path)
+    app.dependency_overrides[api_settings] = lambda: settings
+    job_service.clear()
+    try:
+        client = TestClient(app)
+        created = client.post(
+            "/api/v1/jobs",
+            json={"query": _query(), "outputs": ["plot-json", "png", "netcdf"]},
+        )
+        assert created.status_code == 202
+        completed = _wait_for_job(client, created.json()["job_id"])
+        assert completed["status"] == "completed"
+        assert completed["result"]["groups"][0]["data"]["values"] == [280.0, 282.0]
+        group = completed["groups"][0]
+        assert client.get(group["plot_json_url"]).status_code == 200
+        png = client.get(group["png_url"])
+        assert png.status_code == 200
+        assert png.headers["content-type"] == "image/png"
+        assert png.content.startswith(b"\x89PNG\r\n\x1a\n")
+        data = client.get(group["data_url"])
+        assert data.status_code == 200
+        assert data.headers["content-type"] == "application/x-netcdf"
+    finally:
+        app.dependency_overrides.clear()
+        job_service.clear()
+
+
+def test_job_access_is_scoped_to_bearer_token(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    app.dependency_overrides[api_settings] = lambda: settings
+    monkeypatch.setenv("POLARIS_ACCESS_MODE", "token")
+    monkeypatch.setenv("POLARIS_API_TOKENS", '{"first": "alice", "second": "bob"}')
+    job_service.clear()
+    try:
+        client = TestClient(app)
+        created = client.post(
+            "/api/v1/jobs",
+            headers={"Authorization": "Bearer first"},
+            json={"query": _query(), "outputs": ["netcdf"]},
+        )
+        assert created.status_code == 202
+        job_id = created.json()["job_id"]
+        forbidden = client.get(
+            f"/api/v1/jobs/{job_id}",
+            headers={"Authorization": "Bearer second"},
+        )
+        assert forbidden.status_code == 403
+        missing = client.get(f"/api/v1/jobs/{job_id}")
+        assert missing.status_code == 401
+        completed = None
+        for _ in range(100):
+            response = client.get(
+                f"/api/v1/jobs/{job_id}",
+                headers={"Authorization": "Bearer first"},
+            )
+            completed = response.json()
+            if completed["status"] in {"completed", "failed"}:
+                break
+            time.sleep(0.01)
+        assert completed is not None and completed["status"] == "completed"
+    finally:
+        app.dependency_overrides.clear()
+        job_service.clear()
+
+
+def test_anonymous_mode_needs_no_token_and_reports_public_status(
+    tmp_path, monkeypatch
+):
+    settings = _settings(tmp_path)
+    app.dependency_overrides[api_settings] = lambda: settings
+    monkeypatch.setenv("POLARIS_ACCESS_MODE", "anonymous")
+    monkeypatch.setenv("POLARIS_API_TOKENS", '{"unused": "alice"}')
+    job_service.clear()
+    previous_owner_limit = job_service.max_queued_per_owner
+    job_service.max_queued_per_owner = -1
+    try:
+        client = TestClient(app)
+        status_response = client.get("/api/v1/status")
+        assert status_response.status_code == 200
+        assert status_response.json() == {
+            "access_mode": "anonymous",
+            "running_jobs": 0,
+            "queued_jobs": 0,
+            "queue_capacity": job_service.max_active_jobs,
+        }
+
+        created = client.post(
+            "/api/v1/jobs",
+            json={"query": _query(), "outputs": ["netcdf"]},
+        )
+        assert created.status_code == 202
+        assert _wait_for_job(client, created.json()["job_id"])["status"] == "completed"
+    finally:
+        job_service.max_queued_per_owner = previous_owner_limit
+        app.dependency_overrides.clear()
+        job_service.clear()
+
+
+def test_token_mode_configuration_requires_tokens(monkeypatch):
+    monkeypatch.setenv("POLARIS_ACCESS_MODE", "token")
+    monkeypatch.delenv("POLARIS_API_TOKENS", raising=False)
+
+    with pytest.raises(RuntimeError, match="requires POLARIS_API_TOKENS"):
+        validate_access_configuration()
+
+
+def test_access_mode_must_be_explicit(monkeypatch):
+    monkeypatch.delenv("POLARIS_ACCESS_MODE")
+
+    with pytest.raises(RuntimeError, match="POLARIS_ACCESS_MODE must be set"):
+        validate_access_configuration()
+
+
+def test_preflight_rejects_oversized_query_before_enqueue(
+    tmp_path, monkeypatch
+):
+    settings = _settings(tmp_path)
+    app.dependency_overrides[api_settings] = lambda: settings
+    monkeypatch.setenv("POLARIS_ACCESS_MODE", "anonymous")
+    monkeypatch.setenv("POLARIS_MAX_SPATIAL_CELLS", "10")
+    job_service.clear()
+    try:
+        response = TestClient(app).post(
+            "/api/v1/jobs",
+            json={"query": _query(), "outputs": ["netcdf"]},
+        )
+        assert response.status_code == 422
+        assert "Estimated spatial cells" in response.json()["detail"]
+        assert job_service.status()["running_jobs"] == 0
+        assert job_service.status()["queued_jobs"] == 0
+    finally:
+        app.dependency_overrides.clear()
+        job_service.clear()
+
+
+def test_full_global_queue_returns_friendly_response(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    app.dependency_overrides[api_settings] = lambda: settings
+    monkeypatch.setenv("POLARIS_ACCESS_MODE", "anonymous")
+    previous_capacity = job_service.max_active_jobs
+    job_service.max_active_jobs = 0
+    try:
+        response = TestClient(app).post(
+            "/api/v1/jobs",
+            json={"query": _query(), "outputs": ["netcdf"]},
+        )
+        assert response.status_code == 429
+        assert response.json()["detail"] == "Polar-is is busy; try again shortly"
+        assert response.headers["retry-after"] == "5"
+    finally:
+        job_service.max_active_jobs = previous_capacity
+        app.dependency_overrides.clear()
+        job_service.clear()

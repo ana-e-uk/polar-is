@@ -2,22 +2,30 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 import json
-import math
-import re
+import os
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
-import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
-import xarray as xr
 
 from polaris.config import PROJECT_ROOT, Settings, get_settings
-from storage.query_data.executor import GroupResult, QueryResult, execute_query
+from polaris.services.job_service import (
+    JobAccessDenied,
+    JobNotFound,
+    JobQueueFull,
+    job_service,
+)
+from polaris.services.cleanup import cleanup_stale_outputs
+from polaris.services.result_serializer import (
+    grid_mapping as _grid_mapping,
+)
 from storage.query_data.query_data import TIME_UNITS
 
 
@@ -50,137 +58,79 @@ class QueryRequest(BaseModel):
     filter_value: float | None = None
 
 
+class JobRequest(BaseModel):
+    """One asynchronous query and its desired artifacts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: QueryRequest
+    outputs: list[str] = Field(min_length=1)
+
+
+@dataclass(frozen=True)
+class ApiIdentity:
+    owner: str
+    enforce_owner_limit: bool
+
+
+def access_mode() -> str:
+    raw_mode = os.getenv("POLARIS_ACCESS_MODE")
+    if raw_mode is None or not raw_mode.strip():
+        raise RuntimeError(
+            "POLARIS_ACCESS_MODE must be set to 'anonymous' or 'token'"
+        )
+    mode = raw_mode.strip().lower()
+    if mode not in {"anonymous", "token"}:
+        raise RuntimeError(
+            "POLARIS_ACCESS_MODE must be either 'anonymous' or 'token'"
+        )
+    return mode
+
+
+def configured_tokens(*, required: bool) -> dict[str, str]:
+    raw_tokens = os.getenv("POLARIS_API_TOKENS", "")
+    if not raw_tokens:
+        if required:
+            raise RuntimeError(
+                "POLARIS_ACCESS_MODE=token requires POLARIS_API_TOKENS"
+            )
+        return {}
+    try:
+        tokens = json.loads(raw_tokens)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("POLARIS_API_TOKENS is not valid JSON") from error
+    if not isinstance(tokens, dict) or not tokens:
+        raise RuntimeError("POLARIS_API_TOKENS must be a non-empty JSON object")
+    if not all(
+        isinstance(token, str)
+        and token
+        and isinstance(owner, str)
+        and owner
+        for token, owner in tokens.items()
+    ):
+        raise RuntimeError(
+            "POLARIS_API_TOKENS must map non-empty token strings to owner names"
+        )
+    return tokens
+
+
+def validate_access_configuration() -> str:
+    mode = access_mode()
+    if mode == "token":
+        configured_tokens(required=True)
+    return mode
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    validate_access_configuration()
+    cleanup_stale_outputs(honor_active_markers=False)
+    yield
+
+
 def api_settings() -> Settings:
     """Dependency boundary used by tests and future deployments."""
     return get_settings()
-
-
-def _json_number(value: Any) -> float | None:
-    number = float(value)
-    return number if math.isfinite(number) else None
-
-
-def _timestamps(values: Any) -> list[str]:
-    return [
-        np.datetime_as_string(np.datetime64(value), unit="s")
-        for value in np.asarray(values)
-    ]
-
-
-def _values(data: xr.Dataset, variable: str) -> list[float | None]:
-    return [_json_number(value) for value in data[variable].values]
-
-
-def _numeric_coordinate(data: xr.Dataset, name: str) -> list[float | None]:
-    return [_json_number(value) for value in data[name].values]
-
-
-def _integer_coordinate(data: xr.Dataset, name: str) -> list[int]:
-    return [int(value) for value in data[name].values]
-
-
-def _display_longitude(value: Any) -> float | None:
-    number = _json_number(value)
-    return None if number is None else ((number + 180) % 360) - 180
-
-
-def _display_corner_longitudes(data: xr.Dataset) -> list[list[float | None]]:
-    """Keep each polygon continuous while using familiar displayed longitudes."""
-    rows = []
-    for center, corners in zip(data["longitude"].values, data["corner_longitude"].values):
-        display_center = ((float(center) + 180) % 360) - 180
-        row = []
-        for corner in corners:
-            display_corner = ((float(corner) + 180) % 360) - 180
-            while display_corner - display_center > 180:
-                display_corner -= 360
-            while display_corner - display_center < -180:
-                display_corner += 360
-            row.append(_json_number(display_corner))
-        rows.append(row)
-    return rows
-
-
-def _serialize_plot_data(group: GroupResult, function: str) -> dict[str, Any]:
-    data = group.data
-    variable = group.source.variable
-    if function in {"timeseries", "find-time"}:
-        payload: dict[str, Any] = {
-            "kind": function,
-            "timestamps": _timestamps(data["timestamp"].values),
-            "values": _values(data, variable),
-        }
-        if "matches" in data:
-            payload["matches"] = [bool(value) for value in data["matches"].values]
-            payload["predicate"] = data["matches"].attrs.get("predicate")
-            payload["filter_value"] = _json_number(
-                data["matches"].attrs.get("filter_value")
-            )
-        return payload
-    if function in {"heatmap", "find-area"}:
-        payload = {
-            "kind": function,
-            "cell_ids": [str(value) for value in data["cell_id"].values],
-            "latitudes": [_json_number(value) for value in data["latitude"].values],
-            "longitudes": [_display_longitude(value) for value in data["longitude"].values],
-            "source_y_indices": _integer_coordinate(data, "source_y_index"),
-            "source_x_indices": _integer_coordinate(data, "source_x_index"),
-            "source_y_starts": _integer_coordinate(data, "source_y_start"),
-            "source_y_stops": _integer_coordinate(data, "source_y_stop"),
-            "source_x_starts": _integer_coordinate(data, "source_x_start"),
-            "source_x_stops": _integer_coordinate(data, "source_x_stop"),
-            "grid_y_indices": _integer_coordinate(data, "grid_y_index"),
-            "grid_x_indices": _integer_coordinate(data, "grid_x_index"),
-            "corner_latitudes": [
-                [_json_number(value) for value in row]
-                for row in data["corner_latitude"].values
-            ],
-            "corner_longitudes": _display_corner_longitudes(data),
-            "values": _values(data, variable),
-        }
-        if "projection_x" in data.coords:
-            payload["projection_x"] = _numeric_coordinate(data, "projection_x")
-        if "projection_y" in data.coords:
-            payload["projection_y"] = _numeric_coordinate(data, "projection_y")
-        if "matches" in data:
-            payload["matches"] = [bool(value) for value in data["matches"].values]
-            payload["predicate"] = data["matches"].attrs.get("predicate")
-            payload["filter_value"] = _json_number(
-                data["matches"].attrs.get("filter_value")
-            )
-        return payload
-    return {
-        "kind": "get-data",
-        "timestamps": _timestamps(data["timestamp"].values),
-        "cell_count": int(data.sizes.get("cell", 0)),
-    }
-
-
-def _serialize_group(
-    group: GroupResult,
-    result: QueryResult,
-    settings: Settings,
-) -> dict[str, Any]:
-    dataset_definition = settings.name_docs.get(group.source.repository, {}).get(
-        group.source.dataset, {}
-    )
-    return {
-        "group_id": group.group_id,
-        "source": asdict(group.source),
-        "units": group.units,
-        "warnings": list(group.warnings),
-        "coverage": {
-            "hit_count": len(group.hit_set),
-            "miss_count": len(group.miss_set),
-        },
-        "grid": dataset_definition.get("grid"),
-        "coarseness_factor": int(group.data.attrs["coarseness_factor"]),
-        "download_url": (
-            f"/api/results/{result.query_id}/{result.function}/"
-            f"{group.group_id}/download"
-        ),
-        "data": _serialize_plot_data(group, result.function),
-    }
 
 
 def _display_bounds(west: float, east: float) -> tuple[float, float]:
@@ -274,6 +224,7 @@ def _availability(settings: Settings) -> list[dict[str, Any]]:
 
 
 def _catalog(settings: Settings) -> dict[str, Any]:
+    repository_titles = settings.frontend_titles.get("repository", {})
     repositories = []
     for repository_name, dataset_definitions in settings.name_docs.items():
         datasets = []
@@ -290,9 +241,16 @@ def _catalog(settings: Settings) -> dict[str, Any]:
                     "grid": definition.get("grid"),
                 }
             )
-        repositories.append({"name": repository_name, "datasets": datasets})
+        repositories.append(
+            {
+                "name": repository_name,
+                "display_name": repository_titles.get(repository_name),
+                "datasets": datasets,
+            }
+        )
     return {
         "repositories": repositories,
+        "frontend_titles": settings.frontend_titles,
         "coarseness_factors": sorted(settings.coarseness_to_spatial_level),
         "time_units": list(TIME_UNITS),
         "functions": list(settings.supported_query_functions),
@@ -304,13 +262,35 @@ app = FastAPI(
     title="Polar-is API",
     description="Query the spatio-temporal data managed by Polar-is.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+_bearer = HTTPBearer(auto_error=False)
+
+
+def api_identity(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> ApiIdentity:
+    """Return an anonymous conference identity or a configured token owner."""
+    if access_mode() == "anonymous":
+        return ApiIdentity("anonymous", enforce_owner_limit=False)
+    try:
+        tokens = configured_tokens(required=True)
+    except RuntimeError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    if credentials is None or credentials.credentials not in tokens:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="A valid Polar-is access token is required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return ApiIdentity(tokens[credentials.credentials], enforce_owner_limit=True)
 
 
 @app.get("/api/catalog")
@@ -325,50 +305,82 @@ def get_availability(
     return {"rows": _availability(settings)}
 
 
-@app.post("/api/queries")
-def post_query(
-    request: QueryRequest,
+@app.post("/api/v1/jobs", status_code=status.HTTP_202_ACCEPTED)
+def create_job(
+    request: JobRequest,
+    identity: ApiIdentity = Depends(api_identity),
     settings: Settings = Depends(api_settings),
 ) -> dict[str, Any]:
+    """Validate and enqueue one prototype query job."""
     try:
-        result = execute_query(request.model_dump(), settings)
+        job = job_service.submit(
+            request.query.model_dump(),
+            request.outputs,
+            identity.owner,
+            settings,
+            enforce_owner_limit=identity.enforce_owner_limit,
+        )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return {
-        "query_id": result.query_id,
-        "function": result.function,
-        "warnings": list(result.warnings),
-        "unmatched_miss_count": len(result.unmatched_miss_set),
-        "groups": [
-            _serialize_group(group, result, settings) for group in result.groups
-        ],
-    }
+    except JobQueueFull as error:
+        raise HTTPException(
+            status_code=429,
+            detail=str(error),
+            headers={"Retry-After": "5"},
+        ) from error
+    return job_service.response(job)
 
 
-_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+def _owned_job(job_id: str, owner: str):
+    try:
+        return job_service.get(job_id, owner)
+    except JobAccessDenied as error:
+        raise HTTPException(status_code=403, detail="Job access denied") from error
+    except JobNotFound as error:
+        raise HTTPException(status_code=404, detail="Job not found") from error
 
 
-@app.get("/api/results/{query_id}/{function}/{group_id}/download")
-def download_result(
-    query_id: str,
-    function: str,
+@app.get("/api/v1/jobs/{job_id}")
+def get_job(
+    job_id: str,
+    identity: ApiIdentity = Depends(api_identity),
+) -> dict[str, Any]:
+    return job_service.response(_owned_job(job_id, identity.owner))
+
+
+@app.delete("/api/v1/jobs/{job_id}")
+def cancel_job(
+    job_id: str,
+    identity: ApiIdentity = Depends(api_identity),
+) -> dict[str, Any]:
+    _owned_job(job_id, identity.owner)
+    return job_service.response(job_service.cancel(job_id, identity.owner))
+
+
+@app.get("/api/v1/jobs/{job_id}/outputs/{group_id}/{kind}")
+def download_job_output(
+    job_id: str,
     group_id: str,
-    settings: Settings = Depends(api_settings),
+    kind: str,
+    identity: ApiIdentity = Depends(api_identity),
 ) -> FileResponse:
-    if (
-        not _ID_PATTERN.fullmatch(query_id)
-        or not _ID_PATTERN.fullmatch(group_id)
-        or function not in settings.supported_query_functions
-    ):
-        raise HTTPException(status_code=404, detail="Result not found")
-    path = settings._query_results / query_id / function / f"{group_id}.nc"
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Result not found")
+    _owned_job(job_id, identity.owner)
+    try:
+        artifact = job_service.artifact(job_id, group_id, kind, identity.owner)
+    except JobNotFound as error:
+        raise HTTPException(status_code=404, detail="Job output not found") from error
+    if not artifact.path.is_file():
+        raise HTTPException(status_code=404, detail="Job output not found")
     return FileResponse(
-        path,
-        media_type="application/x-netcdf",
-        filename=f"polar-is-{query_id}-{group_id}.nc",
+        artifact.path,
+        media_type=artifact.media_type,
+        filename=artifact.filename,
     )
+
+
+@app.get("/api/v1/status")
+def get_service_status() -> dict[str, Any]:
+    return {"access_mode": access_mode(), **job_service.status()}
 
 
 frontend_dist = PROJECT_ROOT / "api" / "interface" / "frontend" / "dist"
