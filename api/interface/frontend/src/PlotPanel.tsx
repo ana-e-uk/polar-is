@@ -6,6 +6,15 @@ import type { Catalog, QueryResult, ResultGroup } from "./types";
 
 type Props = { result: QueryResult | null; loading: boolean; catalog: Catalog };
 type ValueRange = { minimum: number; maximum: number };
+type SpatialCell = {
+  value: number;
+  label: string;
+  matches: boolean;
+  latitudes: number[];
+  longitudes: number[];
+  latitude: number;
+  longitude: number;
+};
 
 const VIRIDIS = [
   "#440154", "#482878", "#3e4989", "#31688e", "#26828e",
@@ -58,11 +67,72 @@ function coordinateTrace(
     : { ...trace, type: "scatter", x: longitudes, y: latitudes } as Data;
 }
 
+function projectedHeatmapTrace(
+  cells: SpatialCell[],
+  group: ResultGroup,
+  catalog: Catalog,
+  range: ValueRange,
+): Data {
+  // Fine CARRA selections can contain tens of thousands of cells. Plotly
+  // cannot initialize that many independent scattergeo traces, so represent
+  // cells with similar colors as GeoJSON MultiPolygons in one choropleth.
+  // Hover stays exact because a separate center-marker trace retains every
+  // original value.
+  const binCount = 256;
+  const span = range.maximum - range.minimum;
+  const bins = Array.from({ length: binCount }, () => [] as SpatialCell[]);
+  cells.forEach((cell) => {
+    const normalized = span <= 0 ? 0 : (cell.value - range.minimum) / span;
+    const index = Math.max(0, Math.min(binCount - 1, Math.floor(normalized * binCount)));
+    bins[index].push(cell);
+  });
+  const populated = bins.flatMap((members, index) => {
+    if (!members.length) return [];
+    const id = `color-bin-${index}`;
+    const representativeValue = span <= 0
+      ? range.minimum
+      : range.minimum + ((index + 0.5) / binCount) * span;
+    return [{
+      id,
+      value: representativeValue,
+      feature: {
+        type: "Feature",
+        id,
+        properties: {},
+        geometry: {
+          type: "MultiPolygon",
+          coordinates: members.map((cell) => [[
+            ...cell.longitudes.map((longitude, corner) => [longitude, cell.latitudes[corner]]),
+            [cell.longitudes[0], cell.latitudes[0]],
+          ]]),
+        },
+      },
+    }];
+  });
+  return {
+    type: "choropleth",
+    geojson: { type: "FeatureCollection", features: populated.map((item) => item.feature) },
+    featureidkey: "id",
+    locations: populated.map((item) => item.id),
+    z: populated.map((item) => item.value),
+    zmin: range.minimum,
+    zmax: range.maximum === range.minimum ? range.minimum + 1 : range.maximum,
+    autocolorscale: false,
+    colorscale: "Viridis",
+    showscale: true,
+    colorbar: { title: { text: group.units ?? "Value" }, thickness: 14 },
+    marker: { line: { color: "rgba(255,255,255,0.18)", width: 0.15 } },
+    name: sourceName(group, catalog),
+    hoverinfo: "skip",
+    showlegend: false,
+  } as Data;
+}
+
 function areaTraces(group: ResultGroup, catalog: Catalog, range: ValueRange): Data[] {
   const data = group.data;
   if (data.kind !== "heatmap" && data.kind !== "find-area") return [];
   const projected = isProjectedGroup(group);
-  const cells = data.values.flatMap((value, index) => {
+  const cells: SpatialCell[] = data.values.flatMap((value, index) => {
     const latitude = data.latitudes[index];
     const longitude = data.longitudes[index];
     const latitudes = data.corner_latitudes[index];
@@ -84,20 +154,22 @@ function areaTraces(group: ResultGroup, catalog: Catalog, range: ValueRange): Da
 
   // A separate path per cell prevents Plotly from filling the shared envelope
   // of null-separated polygons with only the first cell's color.
-  const traces: Data[] = cells.map((cell) => coordinateTrace(
-    projected,
-    [...cell.longitudes, cell.longitudes[0]],
-    [...cell.latitudes, cell.latitudes[0]],
-    {
-      mode: "lines",
-      fill: "toself",
-      fillcolor: viridisColor(cell.value, range.minimum, range.maximum),
-      connectgaps: false,
-      line: { color: "rgba(255,255,255,0.25)", width: 0.25 },
-      hoverinfo: "skip",
-      showlegend: false,
-    } as Omit<Data, "type">,
-  ));
+  const traces: Data[] = projected
+    ? [projectedHeatmapTrace(cells, group, catalog, range)]
+    : cells.map((cell) => coordinateTrace(
+      false,
+      [...cell.longitudes, cell.longitudes[0]],
+      [...cell.latitudes, cell.latitudes[0]],
+      {
+        mode: "lines",
+        fill: "toself",
+        fillcolor: viridisColor(cell.value, range.minimum, range.maximum),
+        connectgaps: false,
+        line: { color: "rgba(255,255,255,0.25)", width: 0.25 },
+        hoverinfo: "skip",
+        showlegend: false,
+      } as Omit<Data, "type">,
+    ));
 
   traces.push(coordinateTrace(
     projected,
@@ -114,27 +186,29 @@ function areaTraces(group: ResultGroup, catalog: Catalog, range: ValueRange): Da
     } as Omit<Data, "type">,
   ));
 
-  traces.push(coordinateTrace(
-    projected,
-    [cells[0].longitude, cells[0].longitude],
-    [cells[0].latitude, cells[0].latitude],
-    {
-      mode: "markers",
-      marker: {
-        size: 0,
-        opacity: 0,
-        color: [range.minimum, range.maximum],
-        autocolorscale: false,
-        colorscale: "Viridis",
-        cmin: range.minimum,
-        cmax: range.maximum === range.minimum ? range.minimum + 1 : range.maximum,
-        showscale: true,
-        colorbar: { title: { text: group.units ?? "Value" }, thickness: 14 },
-      },
-      hoverinfo: "skip",
-      showlegend: false,
-    } as Omit<Data, "type">,
-  ));
+  if (!projected) {
+    traces.push(coordinateTrace(
+      false,
+      [cells[0].longitude, cells[0].longitude],
+      [cells[0].latitude, cells[0].latitude],
+      {
+        mode: "markers",
+        marker: {
+          size: 0,
+          opacity: 0,
+          color: [range.minimum, range.maximum],
+          autocolorscale: false,
+          colorscale: "Viridis",
+          cmin: range.minimum,
+          cmax: range.maximum === range.minimum ? range.minimum + 1 : range.maximum,
+          showscale: true,
+          colorbar: { title: { text: group.units ?? "Value" }, thickness: 14 },
+        },
+        hoverinfo: "skip",
+        showlegend: false,
+      } as Omit<Data, "type">,
+    ));
+  }
 
   const matches = cells.filter((cell) => cell.matches);
   if (data.kind === "find-area" && matches.length) {

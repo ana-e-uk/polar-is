@@ -28,6 +28,7 @@ export default function App() {
   const [form, setForm] = useState<QueryForm>(initialForm);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [jobStatus, setJobStatus] = useState("");
   const [error, setError] = useState("");
   const [showMap, setShowMap] = useState(true);
   const [showAvailability, setShowAvailability] = useState(false);
@@ -76,14 +77,16 @@ export default function App() {
       return;
     }
     setLoading(true);
+    setJobStatus("Submitting your query…");
     try {
-      const next = await runQuery(form);
+      const next = await runQuery(form, setJobStatus);
       setResult(next);
       setShowMap(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The query could not be completed.");
     } finally {
       setLoading(false);
+      setJobStatus("");
     }
   }
 
@@ -109,6 +112,7 @@ export default function App() {
         <div className="header-note">Spatio-temporal environmental data</div>
       </header>
       {error && <div className="message error" role="alert"><strong>Query could not run.</strong> {error}</div>}
+      {loading && <div className="message" role="status" aria-live="polite">{jobStatus}</div>}
       <div className="workspace">
         <div className="primary-column">
           {showMap ? <RegionPicker region={form.region} onChange={(region) => setForm({ ...form, region })} /> : (

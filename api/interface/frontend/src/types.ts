@@ -143,3 +143,19 @@ export type QueryResult = {
   unmatched_miss_count: number;
   groups: ResultGroup[];
 };
+
+export type QueryJob = {
+  job_id: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "expired";
+  status_url: string;
+  result?: QueryResult;
+  error?: { code: string; message: string };
+  jobs_ahead?: number;
+};
+
+export type ServiceStatus = {
+  access_mode: "anonymous" | "token";
+  running_jobs: number;
+  queued_jobs: number;
+  queue_capacity: number;
+};
