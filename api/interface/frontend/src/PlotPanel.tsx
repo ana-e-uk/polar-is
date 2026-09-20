@@ -8,18 +8,23 @@ type Props = { result: QueryResult | null; loading: boolean; catalog: Catalog };
 type ValueRange = { minimum: number; maximum: number };
 type SpatialCell = {
   value: number;
-  label: string;
   matches: boolean;
   latitudes: number[];
   longitudes: number[];
   latitude: number;
   longitude: number;
+  projectionX: number | null;
+  projectionY: number | null;
+  gridX: number;
+  gridY: number;
 };
-
-const VIRIDIS = [
-  "#440154", "#482878", "#3e4989", "#31688e", "#26828e",
-  "#1f9e89", "#35b779", "#6ece58", "#b5de2b", "#fde725",
-];
+type ProjectedGrid = {
+  trace: Data;
+  xRange: [number, number];
+  yRange: [number, number];
+  dx: number;
+  dy: number;
+};
 
 const isAreaGroup = (group: ResultGroup) =>
   group.data.kind === "heatmap" || group.data.kind === "find-area";
@@ -40,22 +45,6 @@ function selectedDataset(group: ResultGroup, catalog: Catalog) {
     ?.datasets.find((dataset) => dataset.name === group.source.dataset);
 }
 
-function interpolateColor(first: string, second: string, amount: number): string {
-  const channel = (color: string, offset: number) => Number.parseInt(color.slice(offset, offset + 2), 16);
-  const value = (offset: number) => Math.round(
-    channel(first, offset) + (channel(second, offset) - channel(first, offset)) * amount,
-  );
-  return `rgb(${value(1)}, ${value(3)}, ${value(5)})`;
-}
-
-function viridisColor(value: number, minimum: number, maximum: number): string {
-  if (maximum <= minimum) return interpolateColor(VIRIDIS[0], VIRIDIS[1], 0.5);
-  const normalized = Math.max(0, Math.min(1, (value - minimum) / (maximum - minimum)));
-  const position = normalized * (VIRIDIS.length - 1);
-  const lower = Math.min(Math.floor(position), VIRIDIS.length - 2);
-  return interpolateColor(VIRIDIS[lower], VIRIDIS[lower + 1], position - lower);
-}
-
 function coordinateTrace(
   projected: boolean,
   longitudes: Array<number | null>,
@@ -67,70 +56,140 @@ function coordinateTrace(
     : { ...trace, type: "scatter", x: longitudes, y: latitudes } as Data;
 }
 
-function projectedHeatmapTrace(
+function coordinateSpacing(values: number[]): number {
+  if (values.length < 2) return 1;
+  const differences = values.slice(1)
+    .map((value, index) => Math.abs(value - values[index]))
+    .filter((value) => value > 0)
+    .sort((left, right) => left - right);
+  return differences[Math.floor(differences.length / 2)] ?? 1;
+}
+
+function projectedHeatmap(
   cells: SpatialCell[],
   group: ResultGroup,
   catalog: Catalog,
   range: ValueRange,
-): Data {
-  // Fine CARRA selections can contain tens of thousands of cells. Plotly
-  // cannot initialize that many independent scattergeo traces, so represent
-  // cells with similar colors as GeoJSON MultiPolygons in one choropleth.
-  // Hover stays exact because a separate center-marker trace retains every
-  // original value.
-  const binCount = 256;
-  const span = range.maximum - range.minimum;
-  const bins = Array.from({ length: binCount }, () => [] as SpatialCell[]);
-  cells.forEach((cell) => {
-    const normalized = span <= 0 ? 0 : (cell.value - range.minimum) / span;
-    const index = Math.max(0, Math.min(binCount - 1, Math.floor(normalized * binCount)));
-    bins[index].push(cell);
+): ProjectedGrid {
+  // CARRA is regular in its native Lambert coordinates. A two-dimensional
+  // heatmap preserves every exact cell value without asking Plotly to create
+  // tens of thousands of SVG polygon paths.
+  const projectedCells = cells.filter(
+    (cell): cell is SpatialCell & { projectionX: number; projectionY: number } =>
+      cell.projectionX !== null && cell.projectionY !== null,
+  );
+  if (!projectedCells.length) throw new Error("Projected cells are missing projection_x/projection_y coordinates");
+  const xByIndex = new Map<number, number>();
+  const yByIndex = new Map<number, number>();
+  projectedCells.forEach((cell) => {
+    xByIndex.set(cell.gridX, cell.projectionX);
+    yByIndex.set(cell.gridY, cell.projectionY);
   });
-  const populated = bins.flatMap((members, index) => {
-    if (!members.length) return [];
-    const id = `color-bin-${index}`;
-    const representativeValue = span <= 0
-      ? range.minimum
-      : range.minimum + ((index + 0.5) / binCount) * span;
-    return [{
-      id,
-      value: representativeValue,
-      feature: {
-        type: "Feature",
-        id,
-        properties: {},
-        geometry: {
-          type: "MultiPolygon",
-          coordinates: members.map((cell) => [[
-            ...cell.longitudes.map((longitude, corner) => [longitude, cell.latitudes[corner]]),
-            [cell.longitudes[0], cell.latitudes[0]],
-          ]]),
-        },
-      },
-    }];
+  const columns = [...xByIndex.entries()].sort((left, right) => left[1] - right[1]);
+  const rows = [...yByIndex.entries()].sort((left, right) => left[1] - right[1]);
+  const columnPositions = new Map(columns.map(([index], position) => [index, position]));
+  const rowPositions = new Map(rows.map(([index], position) => [index, position]));
+  const values: Array<Array<number | null>> = Array.from(
+    { length: rows.length },
+    () => Array.from({ length: columns.length }, () => null),
+  );
+  const hover: Array<Array<[number, number] | null>> = Array.from(
+    { length: rows.length },
+    () => Array.from({ length: columns.length }, () => null),
+  );
+  projectedCells.forEach((cell) => {
+    const row = rowPositions.get(cell.gridY);
+    const column = columnPositions.get(cell.gridX);
+    if (row === undefined || column === undefined) return;
+    values[row][column] = cell.value;
+    hover[row][column] = [cell.latitude, cell.longitude];
+  });
+  const x = columns.map(([, coordinate]) => coordinate);
+  const y = rows.map(([, coordinate]) => coordinate);
+  const dx = coordinateSpacing(x);
+  const dy = coordinateSpacing(y);
+  return {
+    trace: {
+      type: "heatmap",
+      x,
+      y,
+      z: values,
+      customdata: hover,
+      zmin: range.minimum,
+      zmax: range.maximum === range.minimum ? range.minimum + 1 : range.maximum,
+      autocolorscale: false,
+      colorscale: "Viridis",
+      showscale: true,
+      colorbar: { title: { text: group.units ?? "Value" }, thickness: 14 },
+      zsmooth: false,
+      name: sourceName(group, catalog),
+      hovertemplate: `%{customdata[0]:.3f}°, %{customdata[1]:.3f}°<br>%{z} ${group.units ?? ""}<extra>${sourceName(group, catalog)}</extra>`,
+      showlegend: false,
+    } as Data,
+    xRange: [x[0] - dx / 2, x[x.length - 1] + dx / 2],
+    yRange: [y[0] - dy / 2, y[y.length - 1] + dy / 2],
+    dx,
+    dy,
+  };
+}
+
+function rectilinearHeatmapTrace(
+  group: ResultGroup,
+  catalog: Catalog,
+  range: ValueRange,
+): Data {
+  const data = group.data;
+  if (data.kind !== "heatmap" && data.kind !== "find-area") {
+    throw new Error("A rectilinear heatmap trace requires spatial data");
+  }
+  const columns = new Map<number, number>();
+  const rows = new Map<number, number>();
+  data.grid_x_indices.forEach((gridIndex, index) => {
+    const longitude = data.longitudes[index];
+    if (longitude !== null) columns.set(gridIndex, longitude);
+  });
+  data.grid_y_indices.forEach((gridIndex, index) => {
+    const latitude = data.latitudes[index];
+    if (latitude !== null) rows.set(gridIndex, latitude);
+  });
+  const orderedColumns = [...columns.entries()].sort((left, right) => left[1] - right[1]);
+  const orderedRows = [...rows.entries()].sort((left, right) => left[1] - right[1]);
+  const columnPositions = new Map(orderedColumns.map(([index], position) => [index, position]));
+  const rowPositions = new Map(orderedRows.map(([index], position) => [index, position]));
+  const values: Array<Array<number | null>> = Array.from(
+    { length: orderedRows.length },
+    () => Array.from({ length: orderedColumns.length }, () => null),
+  );
+  data.values.forEach((value, index) => {
+    const row = rowPositions.get(data.grid_y_indices[index]);
+    const column = columnPositions.get(data.grid_x_indices[index]);
+    if (row !== undefined && column !== undefined) values[row][column] = value;
   });
   return {
-    type: "choropleth",
-    geojson: { type: "FeatureCollection", features: populated.map((item) => item.feature) },
-    featureidkey: "id",
-    locations: populated.map((item) => item.id),
-    z: populated.map((item) => item.value),
+    type: "heatmap",
+    x: orderedColumns.map(([, longitude]) => longitude),
+    y: orderedRows.map(([, latitude]) => latitude),
+    z: values,
     zmin: range.minimum,
     zmax: range.maximum === range.minimum ? range.minimum + 1 : range.maximum,
     autocolorscale: false,
     colorscale: "Viridis",
     showscale: true,
     colorbar: { title: { text: group.units ?? "Value" }, thickness: 14 },
-    marker: { line: { color: "rgba(255,255,255,0.18)", width: 0.15 } },
+    xgap: 0.35,
+    ygap: 0.35,
+    zsmooth: false,
     name: sourceName(group, catalog),
-    hoverinfo: "skip",
+    hovertemplate: `%{y:.3f}°, %{x:.3f}°<br>%{z} ${group.units ?? ""}<extra>${sourceName(group, catalog)}</extra>`,
     showlegend: false,
   } as Data;
 }
 
-function areaTraces(group: ResultGroup, catalog: Catalog, range: ValueRange): Data[] {
+type AreaPlot = { traces: Data[]; cells: SpatialCell[]; projectedGrid?: ProjectedGrid };
+
+function areaPlot(group: ResultGroup, catalog: Catalog, range: ValueRange): AreaPlot {
   const data = group.data;
-  if (data.kind !== "heatmap" && data.kind !== "find-area") return [];
+  if (data.kind !== "heatmap" && data.kind !== "find-area") return { traces: [], cells: [] };
   const projected = isProjectedGroup(group);
   const cells: SpatialCell[] = data.values.flatMap((value, index) => {
     const latitude = data.latitudes[index];
@@ -138,94 +197,57 @@ function areaTraces(group: ResultGroup, catalog: Catalog, range: ValueRange): Da
     const latitudes = data.corner_latitudes[index];
     const longitudes = data.corner_longitudes[index];
     if (value === null || latitude === null || longitude === null
-        || latitudes?.some((item) => item === null)
-        || longitudes?.some((item) => item === null)) return [];
+        || !latitudes || !longitudes || latitudes.length < 3 || longitudes.length < 3
+        || latitudes.some((item) => item === null)
+        || longitudes.some((item) => item === null)) return [];
     return [{
       value,
-      label: `${latitude.toFixed(3)}°, ${longitude.toFixed(3)}°`,
       matches: data.matches?.[index] ?? false,
       latitudes: latitudes as number[],
       longitudes: longitudes as number[],
       latitude,
       longitude,
+      projectionX: data.projection_x?.[index] ?? null,
+      projectionY: data.projection_y?.[index] ?? null,
+      gridX: data.grid_x_indices[index],
+      gridY: data.grid_y_indices[index],
     }];
   });
-  if (!cells.length) return [];
+  if (!cells.length) return { traces: [], cells: [] };
 
-  // A separate path per cell prevents Plotly from filling the shared envelope
-  // of null-separated polygons with only the first cell's color.
-  const traces: Data[] = projected
-    ? [projectedHeatmapTrace(cells, group, catalog, range)]
-    : cells.map((cell) => coordinateTrace(
-      false,
-      [...cell.longitudes, cell.longitudes[0]],
-      [...cell.latitudes, cell.latitudes[0]],
-      {
-        mode: "lines",
-        fill: "toself",
-        fillcolor: viridisColor(cell.value, range.minimum, range.maximum),
-        connectgaps: false,
-        line: { color: "rgba(255,255,255,0.25)", width: 0.25 },
-        hoverinfo: "skip",
-        showlegend: false,
-      } as Omit<Data, "type">,
-    ));
-
-  traces.push(coordinateTrace(
-    projected,
-    cells.map((cell) => cell.longitude),
-    cells.map((cell) => cell.latitude),
-    {
-      mode: "markers",
-      text: cells.map((cell) => cell.label),
-      customdata: cells.map((cell) => cell.value),
-      name: sourceName(group, catalog),
-      marker: { size: 12, color: "rgba(255,255,255,0.001)" },
-      hovertemplate: `%{text}<br>%{customdata} ${group.units ?? ""}<extra>${sourceName(group, catalog)}</extra>`,
-      showlegend: false,
-    } as Omit<Data, "type">,
-  ));
-
-  if (!projected) {
-    traces.push(coordinateTrace(
-      false,
-      [cells[0].longitude, cells[0].longitude],
-      [cells[0].latitude, cells[0].latitude],
-      {
-        mode: "markers",
-        marker: {
-          size: 0,
-          opacity: 0,
-          color: [range.minimum, range.maximum],
-          autocolorscale: false,
-          colorscale: "Viridis",
-          cmin: range.minimum,
-          cmax: range.maximum === range.minimum ? range.minimum + 1 : range.maximum,
-          showscale: true,
-          colorbar: { title: { text: group.units ?? "Value" }, thickness: 14 },
-        },
-        hoverinfo: "skip",
-        showlegend: false,
-      } as Omit<Data, "type">,
-    ));
-  }
+  const projectedGrid = projected ? projectedHeatmap(cells, group, catalog, range) : undefined;
+  const traces: Data[] = projectedGrid
+    ? [projectedGrid.trace]
+    : [rectilinearHeatmapTrace(group, catalog, range)];
 
   const matches = cells.filter((cell) => cell.matches);
   if (data.kind === "find-area" && matches.length) {
-    const latitudes: Array<number | null> = [];
-    const longitudes: Array<number | null> = [];
-    matches.forEach((cell) => {
-      latitudes.push(...cell.latitudes, cell.latitudes[0], null);
-      longitudes.push(...cell.longitudes, cell.longitudes[0], null);
-    });
-    traces.push(coordinateTrace(projected, longitudes, latitudes, {
+    const vertical: Array<number | null> = [];
+    const horizontal: Array<number | null> = [];
+    if (projectedGrid) {
+      matches.forEach((cell) => {
+        if (cell.projectionX === null || cell.projectionY === null) return;
+        const left = cell.projectionX - projectedGrid.dx / 2;
+        const right = cell.projectionX + projectedGrid.dx / 2;
+        const bottom = cell.projectionY - projectedGrid.dy / 2;
+        const top = cell.projectionY + projectedGrid.dy / 2;
+        horizontal.push(left, right, right, left, left, null);
+        vertical.push(bottom, bottom, top, top, bottom, null);
+      });
+    } else {
+      matches.forEach((cell) => {
+        vertical.push(...cell.latitudes, cell.latitudes[0], null);
+        horizontal.push(...cell.longitudes, cell.longitudes[0], null);
+      });
+    }
+    traces.push(coordinateTrace(false, horizontal, vertical, {
       mode: "lines",
       name: "Matches filter",
       hoverinfo: "skip",
       line: { color: "#dc2626", width: 2.5 },
     } as Omit<Data, "type">));
   }
-  return traces;
+  return { traces, cells, projectedGrid };
 }
 
 function coastlineTrace(projected: boolean, coastlines: CoastlineCoordinates): Data {
@@ -235,6 +257,145 @@ function coastlineTrace(projected: boolean, coastlines: CoastlineCoordinates): D
     hoverinfo: "skip",
     showlegend: false,
   } as Omit<Data, "type">);
+}
+
+function lambertProject(group: ResultGroup, longitude: number, latitude: number): [number, number] | null {
+  const mapping = group.grid_mapping;
+  if (!mapping || mapping.grid_mapping_name !== "lambert_conformal_conic") return null;
+  const rawParallels = mapping.standard_parallel;
+  const parallels = Array.isArray(rawParallels)
+    ? rawParallels
+    : rawParallels === undefined ? [] : [rawParallels];
+  if (!parallels.length) return null;
+  const toRadians = Math.PI / 180;
+  const first = parallels[0] * toRadians;
+  const second = (parallels[1] ?? parallels[0]) * toRadians;
+  const origin = (mapping.latitude_of_projection_origin ?? 0) * toRadians;
+  const centralMeridian = (mapping.longitude_of_central_meridian ?? 0) * toRadians;
+  const phi = latitude * toRadians;
+  let lambda = longitude * toRadians;
+  while (lambda - centralMeridian > Math.PI) lambda -= 2 * Math.PI;
+  while (lambda - centralMeridian < -Math.PI) lambda += 2 * Math.PI;
+  const n = Math.abs(first - second) < 1e-12
+    ? Math.sin(first)
+    : Math.log(Math.cos(first) / Math.cos(second))
+      / Math.log(
+        Math.tan(Math.PI / 4 + second / 2)
+        / Math.tan(Math.PI / 4 + first / 2),
+      );
+  const radius = mapping.earth_radius ?? mapping.semi_major_axis;
+  if (!radius || !Number.isFinite(n) || Math.abs(n) < 1e-12) return null;
+  const f = Math.cos(first) * Math.pow(Math.tan(Math.PI / 4 + first / 2), n) / n;
+  const rho = radius * f / Math.pow(Math.tan(Math.PI / 4 + phi / 2), n);
+  const rhoOrigin = radius * f / Math.pow(Math.tan(Math.PI / 4 + origin / 2), n);
+  const theta = n * (lambda - centralMeridian);
+  const x = (mapping.false_easting ?? 0) + rho * Math.sin(theta);
+  const y = (mapping.false_northing ?? 0) + rhoOrigin - rho * Math.cos(theta);
+  return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null;
+}
+
+function niceInterval(span: number): number {
+  const candidates = [0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 90];
+  return candidates.find((candidate) => span / candidate <= 7) ?? 90;
+}
+
+function tickValues(minimum: number, maximum: number, step: number): number[] {
+  const values = [];
+  for (let value = Math.ceil(minimum / step) * step; value <= maximum + step * 1e-6; value += step) {
+    values.push(Number(value.toFixed(8)));
+  }
+  return values;
+}
+
+function degreeLabel(value: number, positive: string, negative: string): string {
+  const suffix = value > 0 ? positive : value < 0 ? negative : "";
+  const magnitude = Number(Math.abs(value).toFixed(4));
+  return `${magnitude}°${suffix}`;
+}
+
+function projectedMapTraces(
+  group: ResultGroup,
+  cells: SpatialCell[],
+  grid: ProjectedGrid,
+  coastlines: CoastlineCoordinates | null,
+): Data[] {
+  const longitudeExtent = numericExtent(cells.flatMap((cell) => cell.longitudes));
+  const latitudeExtent = numericExtent(cells.flatMap((cell) => cell.latitudes));
+  if (!longitudeExtent || !latitudeExtent) return [];
+  const [west, east] = longitudeExtent;
+  const [south, north] = latitudeExtent;
+  const longitudeTicks = tickValues(west, east, niceInterval(east - west));
+  const latitudeTicks = tickValues(south, north, niceInterval(north - south));
+  const gridX: Array<number | null> = [];
+  const gridY: Array<number | null> = [];
+  const samples = 64;
+  longitudeTicks.forEach((longitude) => {
+    for (let index = 0; index <= samples; index += 1) {
+      const latitude = south + ((north - south) * index) / samples;
+      const projected = lambertProject(group, longitude, latitude);
+      if (projected) { gridX.push(projected[0]); gridY.push(projected[1]); }
+    }
+    gridX.push(null); gridY.push(null);
+  });
+  latitudeTicks.forEach((latitude) => {
+    for (let index = 0; index <= samples; index += 1) {
+      const longitude = west + ((east - west) * index) / samples;
+      const projected = lambertProject(group, longitude, latitude);
+      if (projected) { gridX.push(projected[0]); gridY.push(projected[1]); }
+    }
+    gridX.push(null); gridY.push(null);
+  });
+  const traces: Data[] = [{
+    type: "scatter", mode: "lines", x: gridX, y: gridY,
+    line: { color: "rgba(112,132,147,0.48)", width: 0.8 },
+    hoverinfo: "skip", showlegend: false,
+  } as Data];
+
+  const longitudeLabels = longitudeTicks.flatMap((longitude) => {
+    const point = lambertProject(group, longitude, south + (north - south) * 0.025);
+    return point ? [{ point, text: degreeLabel(longitude, "E", "W") }] : [];
+  });
+  const latitudeLabels = latitudeTicks.flatMap((latitude) => {
+    const point = lambertProject(group, west + (east - west) * 0.025, latitude);
+    return point ? [{ point, text: degreeLabel(latitude, "N", "S") }] : [];
+  });
+  traces.push({
+    type: "scatter", mode: "text",
+    x: longitudeLabels.map(({ point }) => point[0]),
+    y: longitudeLabels.map(({ point }) => point[1]),
+    text: longitudeLabels.map(({ text }) => text), textposition: "top center",
+    textfont: { color: "#506878", size: 10 }, hoverinfo: "skip", showlegend: false,
+  } as Data, {
+    type: "scatter", mode: "text",
+    x: latitudeLabels.map(({ point }) => point[0]),
+    y: latitudeLabels.map(({ point }) => point[1]),
+    text: latitudeLabels.map(({ text }) => text), textposition: "middle right",
+    textfont: { color: "#506878", size: 10 }, hoverinfo: "skip", showlegend: false,
+  } as Data);
+
+  if (coastlines) {
+    const coastlineX: Array<number | null> = [];
+    const coastlineY: Array<number | null> = [];
+    const xPadding = (grid.xRange[1] - grid.xRange[0]) * 0.08;
+    const yPadding = (grid.yRange[1] - grid.yRange[0]) * 0.08;
+    coastlines.longitudes.forEach((longitude, index) => {
+      const latitude = coastlines.latitudes[index];
+      if (longitude === null || latitude === null) {
+        coastlineX.push(null); coastlineY.push(null); return;
+      }
+      const point = lambertProject(group, longitude, latitude);
+      if (!point || point[0] < grid.xRange[0] - xPadding || point[0] > grid.xRange[1] + xPadding
+          || point[1] < grid.yRange[0] - yPadding || point[1] > grid.yRange[1] + yPadding) {
+        coastlineX.push(null); coastlineY.push(null); return;
+      }
+      coastlineX.push(point[0]); coastlineY.push(point[1]);
+    });
+    traces.push({
+      type: "scatter", mode: "lines", x: coastlineX, y: coastlineY,
+      line: { color: "#344e5c", width: 1.2 }, hoverinfo: "skip", showlegend: false,
+    } as Data);
+  }
+  return traces;
 }
 
 function numericExtent(values: number[]): [number, number] | undefined {
@@ -253,44 +414,6 @@ function paddedRange(values: number[]): [number, number] | undefined {
   return [minimum - padding, maximum + padding];
 }
 
-function projectionLayout(
-  group: ResultGroup,
-  longitudes: number[],
-  latitudes: number[],
-): Partial<Layout>["geo"] {
-  const mapping = group.grid_mapping;
-  const parallels = mapping?.standard_parallel;
-  const standardParallels = Array.isArray(parallels)
-    ? parallels.slice(0, 2)
-    : parallels === undefined ? undefined : [parallels, parallels];
-  const centralLongitude = mapping?.longitude_of_central_meridian ?? 0;
-  const displayedCentralLongitude = ((centralLongitude + 180) % 360 + 360) % 360 - 180;
-  const projectionOrigin = mapping?.latitude_of_projection_origin ?? 0;
-  return {
-    projection: {
-      type: "conic conformal",
-      parallels: standardParallels,
-      rotation: {
-        // Plotly/D3 rotation is the inverse of the CF central meridian.
-        lon: -displayedCentralLongitude,
-        lat: 0,
-      },
-    },
-    center: { lon: displayedCentralLongitude, lat: projectionOrigin },
-    showland: true,
-    landcolor: "#e7eef2",
-    showocean: true,
-    oceancolor: "#f3f8fa",
-    showcoastlines: false,
-    showcountries: false,
-    showframe: true,
-    framecolor: "#506878",
-    framewidth: 1,
-    lonaxis: { showgrid: true, gridcolor: "#aebfca", dtick: 10, range: paddedRange(longitudes) },
-    lataxis: { showgrid: true, gridcolor: "#aebfca", dtick: 5, range: paddedRange(latitudes) },
-  };
-}
-
 function SpatialPlot({ group, catalog, range }: { group: ResultGroup; catalog: Catalog; range: ValueRange }) {
   const plotRef = useRef<HTMLDivElement>(null);
   const projected = isProjectedGroup(group);
@@ -304,19 +427,42 @@ function SpatialPlot({ group, catalog, range }: { group: ResultGroup; catalog: C
     if (data.kind !== "heatmap" && data.kind !== "find-area") return;
     const longitudes = data.corner_longitudes.flat().filter((value): value is number => value !== null);
     const latitudes = data.corner_latitudes.flat().filter((value): value is number => value !== null);
-    const traces = areaTraces(group, catalog, range);
+    const showPlotError = (error: unknown) => {
+      if (disposed) return;
+      console.error("Unable to render spatial plot", error);
+      const message = error instanceof Error ? error.message : String(error);
+      element.replaceChildren();
+      const notice = document.createElement("p");
+      notice.className = "plot-error";
+      notice.textContent = `Unable to render this heatmap: ${message}`;
+      element.append(notice);
+    };
+    let plot: AreaPlot;
+    try {
+      plot = areaPlot(group, catalog, range);
+    } catch (error) {
+      showPlotError(error);
+      return;
+    }
+    const traces = plot.traces;
     const hasMatches = data.kind === "find-area" && data.matches?.some(Boolean);
     const layout: Partial<Layout> = {
       autosize: true,
-      margin: projected
-        ? { l: 12, r: 54, t: 8, b: hasMatches ? 52 : 16 }
-        : { l: 58, r: 54, t: 8, b: hasMatches ? 76 : 54 },
+      margin: { l: 58, r: 54, t: 8, b: hasMatches ? 76 : 54 },
       paper_bgcolor: "#ffffff",
       plot_bgcolor: "#f7fafc",
       font: { family: "Inter, ui-sans-serif, system-ui", color: "#17324d", size: 12 },
       showlegend: Boolean(hasMatches),
       legend: { orientation: "h", x: 0, y: -0.18, yanchor: "top" },
-      xaxis: projected ? undefined : {
+      xaxis: projected && plot.projectedGrid ? {
+        title: { text: "Longitude" },
+        showgrid: false,
+        showticklabels: false,
+        zeroline: false,
+        showline: true,
+        mirror: true,
+        range: plot.projectedGrid.xRange,
+      } : {
         title: { text: "Longitude" },
         gridcolor: "#b8c8d3",
         showline: true,
@@ -324,7 +470,17 @@ function SpatialPlot({ group, catalog, range }: { group: ResultGroup; catalog: C
         ticks: "outside",
         range: paddedRange(longitudes),
       },
-      yaxis: projected ? undefined : {
+      yaxis: projected && plot.projectedGrid ? {
+        title: { text: "Latitude" },
+        showgrid: false,
+        showticklabels: false,
+        zeroline: false,
+        showline: true,
+        mirror: true,
+        range: plot.projectedGrid.yRange,
+        scaleanchor: "x",
+        scaleratio: 1,
+      } : {
         title: { text: "Latitude" },
         gridcolor: "#b8c8d3",
         showline: true,
@@ -334,19 +490,22 @@ function SpatialPlot({ group, catalog, range }: { group: ResultGroup; catalog: C
         scaleanchor: "x",
         scaleratio: 1,
       },
-      geo: projected ? projectionLayout(group, longitudes, latitudes) : undefined,
     };
 
     const coastlineRequest = loadCoastlines().catch(() => null);
     void Promise.all([import("plotly.js-dist-min"), coastlineRequest]).then(([{ default: Plotly }, coastlines]) => {
       if (disposed) return;
       plotly = Plotly;
-      if (coastlines) traces.push(coastlineTrace(projected, coastlines));
-      Plotly.react(element, traces, layout, {
+      if (projected && plot.projectedGrid) {
+        traces.splice(1, 0, ...projectedMapTraces(group, plot.cells, plot.projectedGrid, coastlines));
+      } else if (coastlines) {
+        traces.push(coastlineTrace(false, coastlines));
+      }
+      void Plotly.react(element, traces, layout, {
         responsive: true,
         displaylogo: false,
         topojsonURL: `${import.meta.env.BASE_URL}topojson/`,
-      });
+      }).catch(showPlotError);
     });
     return () => {
       disposed = true;
