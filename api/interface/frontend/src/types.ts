@@ -144,6 +144,15 @@ export type QueryResult = {
   groups: ResultGroup[];
 };
 
+export type PlotLayout = "grid" | "large";
+
+export type PlotSnapshot = {
+  id: string;
+  result: QueryResult;
+  query: QueryForm;
+  colorRange?: { minimum: number; maximum: number };
+};
+
 export type QueryJob = {
   job_id: string;
   status: "queued" | "running" | "completed" | "failed" | "cancelled" | "expired";

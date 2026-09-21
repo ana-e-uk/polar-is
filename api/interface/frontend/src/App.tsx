@@ -4,8 +4,8 @@ import AvailabilityTable from "./AvailabilityTable";
 import PlotPanel from "./PlotPanel";
 import QueryControls from "./QueryControls";
 import RegionPicker from "./RegionPicker";
-import type { AvailabilityRow, Catalog, QueryForm, QueryResult } from "./types";
-import { datasetName, spatialResolutionTitle, variableTitle } from "./titles";
+import type { AvailabilityRow, Catalog, PlotLayout, PlotSnapshot, QueryForm, QueryResult } from "./types";
+import { datasetName, variableTitle } from "./titles";
 
 const initialForm: QueryForm = {
   repository: "",
@@ -27,6 +27,12 @@ export default function App() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [form, setForm] = useState<QueryForm>(initialForm);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [resultQuery, setResultQuery] = useState<QueryForm | null>(null);
+  const [pinnedPlots, setPinnedPlots] = useState<PlotSnapshot[]>([]);
+  const [plotLayout, setPlotLayout] = useState<PlotLayout>("grid");
+  const [useSharedScale, setUseSharedScale] = useState(false);
+  const [pinNotice, setPinNotice] = useState("");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [jobStatus, setJobStatus] = useState("");
   const [error, setError] = useState("");
@@ -49,15 +55,6 @@ export default function App() {
     if (!result) return [];
     return Array.from(new Set([...result.warnings, ...result.groups.flatMap((group) => group.warnings)]));
   }, [result]);
-  const selectedDataset = catalog && form.dataset
-    ? (form.repository
-      ? catalog.repositories
-        .find((repository) => repository.name === form.repository)
-        ?.datasets.find((dataset) => dataset.name === form.dataset)
-      : catalog.repositories
-        .flatMap((repository) => repository.datasets)
-        .find((dataset) => dataset.name === form.dataset))
-    : undefined;
   const displayedVariable = catalog && form.variable
     ? variableTitle(catalog, form.variable)
     : "Choose a variable";
@@ -78,9 +75,15 @@ export default function App() {
     }
     setLoading(true);
     setJobStatus("Submitting your query…");
+    const submittedForm: QueryForm = {
+      ...form,
+      region: { ...form.region },
+      additional_parameters: { ...form.additional_parameters },
+    };
     try {
-      const next = await runQuery(form, setJobStatus);
+      const next = await runQuery(submittedForm, setJobStatus);
       setResult(next);
+      setResultQuery(submittedForm);
       setShowMap(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The query could not be completed.");
@@ -88,6 +91,21 @@ export default function App() {
       setLoading(false);
       setJobStatus("");
     }
+  }
+
+  function pinPlot(plot: PlotSnapshot) {
+    setPinNotice("");
+    if (pinnedPlots.some((item) => item.id === plot.id)) return;
+    if (pinnedPlots.length >= 2) {
+      setPinNotice("Two plots are already pinned. Remove one before pinning another.");
+      return;
+    }
+    setPinnedPlots((current) => [...current, plot]);
+  }
+
+  function unpinPlot(id: string) {
+    setPinNotice("");
+    setPinnedPlots((current) => current.filter((item) => item.id !== id));
   }
 
   async function openAvailability() {
@@ -113,23 +131,43 @@ export default function App() {
       </header>
       {error && <div className="message error" role="alert"><strong>Query could not run.</strong> {error}</div>}
       {loading && <div className="message" role="status" aria-live="polite">{jobStatus}</div>}
-      <div className="workspace">
+      <div className={sidebarCollapsed ? "workspace sidebar-collapsed" : "workspace"}>
         <div className="primary-column">
           {showMap ? <RegionPicker region={form.region} onChange={(region) => setForm({ ...form, region })} /> : (
             <div className="result-wrap">
-              <div className="result-heading"><div><p className="eyebrow">Query result</p><h2>{displayedVariable}</h2></div><button className="secondary-button" onClick={() => setShowMap(true)}>Change region</button></div>
-              {catalog && <PlotPanel result={result} loading={loading} catalog={catalog} />}
+              <div className="result-heading">
+                <div><p className="eyebrow">Query result</p><h2>{displayedVariable}</h2></div>
+                <button className="secondary-button" type="button" onClick={() => setShowMap(true)}>Change region</button>
+              </div>
+              {catalog && <PlotPanel result={result} query={resultQuery} loading={loading} catalog={catalog} pinnedPlots={pinnedPlots} layout={plotLayout} useSharedScale={useSharedScale} onPin={pinPlot} onUnpin={unpinPlot} />}
             </div>
           )}
         </div>
-        <aside className="side-column">
-          <section className="summary-card"><p className="eyebrow">Current selection</p><h2>{displayedVariable}</h2><dl><div><dt>Function</dt><dd>{form.function}</dd></div><div><dt>Resolution</dt><dd>{catalog ? spatialResolutionTitle(catalog, selectedDataset, form.coarseness_factor) : "—"} · {form.time_unit}</dd></div><div><dt>Dates</dt><dd>{form.time_start} — {form.time_end}</dd></div></dl></section>
-          {result?.groups.map((group) => <section className="download-card" key={group.group_id}><div><strong>{catalog ? datasetName(catalog, group.source.repository, group.source.dataset) : group.source.dataset}</strong><span>{group.coverage.hit_count.toLocaleString()} covered cells</span></div><a href={group.download_url}>Download NetCDF</a></section>)}
+        {!sidebarCollapsed && <aside className="side-column">
+          {catalog ? <QueryControls catalog={catalog} form={form} onChange={setForm} onSubmit={submit} onShowAvailability={openAvailability} onCollapse={() => setSidebarCollapsed(true)} loading={loading} /> : <section className="controls-panel state-panel"><div className="spinner" /><p>Loading available data…</p></section>}
+          <section className="plot-controls-card">
+            <p className="eyebrow">Plot controls</p>
+            <div className="plot-control-row">
+              <div className="view-toggle" role="group" aria-label="Plot layout">
+                {(["grid", "large"] as PlotLayout[]).map((mode) => (
+                  <button key={mode} type="button" className={plotLayout === mode ? "active" : ""} onClick={() => setPlotLayout(mode)}>{mode === "grid" ? "Grid" : "Large"}</button>
+                ))}
+              </div>
+              <label className="shared-scale" title="Use one color range for visible plots that have matching units">
+                <input type="checkbox" checked={useSharedScale} onChange={(event) => setUseSharedScale(event.target.checked)} />
+                Use shared scale
+              </label>
+            </div>
+            {pinnedPlots.length > 0 && <button className="text-button clear-pinned-button" type="button" onClick={() => { setPinnedPlots([]); setPinNotice(""); }}>Clear pinned</button>}
+            {pinNotice && <span className="pin-notice" role="status">{pinNotice}</span>}
+          </section>
+          {result?.groups.length ? <section className="downloads-section">
+            <p className="eyebrow">Downloads</p>
+            {result.groups.map((group) => <section className="download-card" key={group.group_id}><div><strong>{catalog ? datasetName(catalog, group.source.repository, group.source.dataset) : group.source.dataset}</strong><span>{group.coverage.hit_count.toLocaleString()} covered cells</span></div><a href={group.download_url}>NetCDF</a></section>)}
+          </section> : null}
           {warnings.length > 0 && <section className="warnings" aria-live="polite"><h2>Coverage notes</h2><ul>{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section>}
-        </aside>
-        <div className="controls-row">
-          {catalog ? <QueryControls catalog={catalog} form={form} onChange={setForm} onSubmit={submit} onShowAvailability={openAvailability} loading={loading} /> : <section className="controls-panel state-panel"><div className="spinner" /><p>Loading available data…</p></section>}
-        </div>
+        </aside>}
+        {sidebarCollapsed && <button className="sidebar-reopen-button" type="button" onClick={() => setSidebarCollapsed(false)} title="Open data and plot controls" aria-label="Open data and plot controls">‹</button>}
       </div>
       {showAvailability && catalog && <AvailabilityTable rows={availability} loading={availabilityLoading} error={availabilityError} catalog={catalog} onClose={() => setShowAvailability(false)} />}
     </main>

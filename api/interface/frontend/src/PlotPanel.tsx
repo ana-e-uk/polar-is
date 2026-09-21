@@ -1,10 +1,20 @@
 import { useEffect, useRef } from "react";
 import type { Data, Layout } from "plotly.js";
 import { loadCoastlines, type CoastlineCoordinates } from "./geoTopology";
-import { datasetName, repositoryName, spatialResolutionTitle, variableTitle } from "./titles";
-import type { Catalog, QueryResult, ResultGroup } from "./types";
+import { datasetName, fallbackTitle, repositoryName, spatialResolutionTitle, variableTitle } from "./titles";
+import type { Catalog, PlotLayout, PlotSnapshot, QueryForm, QueryResult, ResultGroup } from "./types";
 
-type Props = { result: QueryResult | null; loading: boolean; catalog: Catalog };
+type Props = {
+  result: QueryResult | null;
+  query: QueryForm | null;
+  loading: boolean;
+  catalog: Catalog;
+  pinnedPlots: PlotSnapshot[];
+  layout: PlotLayout;
+  useSharedScale: boolean;
+  onPin: (plot: PlotSnapshot) => void;
+  onUnpin: (id: string) => void;
+};
 type ValueRange = { minimum: number; maximum: number };
 type SpatialCell = {
   value: number;
@@ -414,7 +424,36 @@ function paddedRange(values: number[]): [number, number] | undefined {
   return [minimum - padding, maximum + padding];
 }
 
-function SpatialPlot({ group, catalog, range }: { group: ResultGroup; catalog: Catalog; range: ValueRange }) {
+function coordinateLabel(value: number, positive: string, negative: string): string {
+  const suffix = value > 0 ? positive : value < 0 ? negative : "";
+  return `${Number(Math.abs(value).toFixed(2))}°${suffix}`;
+}
+
+function plotMetadata(group: ResultGroup, query: QueryForm, catalog: Catalog): string {
+  const resolution = spatialResolutionTitle(catalog, selectedDataset(group, catalog), group.coarseness_factor);
+  const region = `${coordinateLabel(query.region.south, "N", "S")}–${coordinateLabel(query.region.north, "N", "S")}, ${coordinateLabel(query.region.west, "E", "W")}–${coordinateLabel(query.region.east, "E", "W")}`;
+  return `${fallbackTitle(query.function)} · ${resolution} · ${query.time_unit} · ${query.time_start}–${query.time_end} · ${region}`;
+}
+
+function PinIcon({ filled = false }: { filled?: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9 3h6l-.8 5 3.3 3.3v1.4H13v7l-1 1.5-1-1.5v-7H6.5v-1.4L9.8 8 9 3Z" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PlotCardActions({ snapshot, pinned, onPin, onUnpin }: { snapshot: PlotSnapshot; pinned: boolean; onPin: (plot: PlotSnapshot) => void; onUnpin: (id: string) => void }) {
+  return (
+    <div className="plot-card-actions">
+      {pinned && <span className="pinned-badge">Pinned</span>}
+      <button className={pinned ? "icon-button active" : "icon-button"} type="button" title={pinned ? "Unpin plot" : "Pin plot for comparison"} aria-label={pinned ? "Unpin plot" : "Pin plot"} onClick={() => pinned ? onUnpin(snapshot.id) : onPin(snapshot)}><PinIcon filled={pinned} /></button>
+      {pinned && <button className="icon-button remove" type="button" title="Remove pinned plot" aria-label="Remove pinned plot" onClick={() => onUnpin(snapshot.id)}>×</button>}
+    </div>
+  );
+}
+
+function SpatialPlot({ group, catalog, range, snapshot, pinned, onPin, onUnpin }: { group: ResultGroup; catalog: Catalog; range: ValueRange; snapshot: PlotSnapshot; pinned: boolean; onPin: (plot: PlotSnapshot) => void; onUnpin: (id: string) => void }) {
   const plotRef = useRef<HTMLDivElement>(null);
   const projected = isProjectedGroup(group);
 
@@ -513,19 +552,21 @@ function SpatialPlot({ group, catalog, range }: { group: ResultGroup; catalog: C
     };
   }, [catalog, group, projected, range.maximum, range.minimum]);
 
-  const resolution = spatialResolutionTitle(catalog, selectedDataset(group, catalog), group.coarseness_factor);
   return (
     <article className="spatial-plot-card">
       <header className="spatial-plot-heading">
-        <h3>{sourceName(group, catalog)}</h3>
-        <p>{repositoryName(catalog, group.source.repository)} · {resolution}</p>
+        <div>
+          <h3>{sourceName(group, catalog)}</h3>
+          <p>{repositoryName(catalog, group.source.repository)} · {plotMetadata(group, snapshot.query, catalog)}</p>
+        </div>
+        <PlotCardActions snapshot={snapshot} pinned={pinned} onPin={onPin} onUnpin={onUnpin} />
       </header>
       <div className="spatial-plot" ref={plotRef} />
     </article>
   );
 }
 
-function TimePlot({ result, catalog }: { result: QueryResult; catalog: Catalog }) {
+function TimePlot({ result, catalog, snapshot, pinned, onPin, onUnpin }: { result: QueryResult; catalog: Catalog; snapshot: PlotSnapshot; pinned: boolean; onPin: (plot: PlotSnapshot) => void; onUnpin: (id: string) => void }) {
   const plotRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -587,7 +628,19 @@ function TimePlot({ result, catalog }: { result: QueryResult; catalog: Catalog }
     };
   }, [catalog, result]);
 
-  return <section className="result-panel"><div className="plot" ref={plotRef} /></section>;
+  const datasets = result.groups.map((group) => sourceName(group, catalog)).join(" + ");
+  return (
+    <article className="spatial-plot-card time-plot-card">
+      <header className="spatial-plot-heading">
+        <div>
+          <h3>{datasets}</h3>
+          <p>{plotMetadata(result.groups[0], snapshot.query, catalog)}</p>
+        </div>
+        <PlotCardActions snapshot={snapshot} pinned={pinned} onPin={onPin} onUnpin={onUnpin} />
+      </header>
+      <div className="spatial-plot" ref={plotRef} />
+    </article>
+  );
 }
 
 function valueRange(groups: ResultGroup[], group: ResultGroup): ValueRange {
@@ -603,23 +656,49 @@ function valueRange(groups: ResultGroup[], group: ResultGroup): ValueRange {
   return { minimum: extent[0], maximum: extent[1] };
 }
 
-export default function PlotPanel({ result, loading, catalog }: Props) {
-  if (loading) return <section className="result-panel state-panel"><div className="spinner" /><h2>Reading Polar-is storage</h2><p>The query may take a moment for a large region or fine resolution.</p></section>;
-  if (!result) return <section className="result-panel state-panel"><div className="empty-orbit" aria-hidden="true" /><h2>No result yet</h2><p>Select a region and data object, then run a query.</p></section>;
-  if (!result.groups.length) return <section className="result-panel state-panel"><h2>No matching data</h2><p>Try another region, time interval, or resolution. Review the warnings below for details.</p></section>;
-  if (result.function === "get-data") return <section className="result-panel state-panel"><h2>Data is ready</h2><p>The query returned {result.groups.reduce((sum, group) => sum + (group.data.kind === "get-data" ? group.data.cell_count : 0), 0).toLocaleString()} spatial cells. Use the download links below to save the NetCDF results.</p></section>;
-
+function snapshotsForResult(result: QueryResult, query: QueryForm): PlotSnapshot[] {
   const areaGroups = result.groups.filter(isAreaGroup);
   if (areaGroups.length) {
-    return (
-      <section className="result-panel spatial-result-panel">
-        <div className="spatial-plot-grid">
-          {areaGroups.map((group) => (
-            <SpatialPlot key={group.group_id} group={group} catalog={catalog} range={valueRange(areaGroups, group)} />
-          ))}
-        </div>
-      </section>
-    );
+    return areaGroups.map((group) => ({
+      id: `${result.query_id}:${group.group_id}`,
+      result: { ...result, groups: [group] },
+      query,
+      colorRange: valueRange(areaGroups, group),
+    }));
   }
-  return <TimePlot result={result} catalog={catalog} />;
+  if (result.function === "timeseries" || result.function === "find-time") {
+    return [{ id: `${result.query_id}:time`, result, query }];
+  }
+  return [];
+}
+
+export default function PlotPanel({ result, query, loading, catalog, pinnedPlots, layout, useSharedScale, onPin, onUnpin }: Props) {
+  const currentPlots = result && query ? snapshotsForResult(result, query) : [];
+  const currentIds = new Set(currentPlots.map((plot) => plot.id));
+  const plots = [...pinnedPlots.filter((plot) => !currentIds.has(plot.id)), ...currentPlots];
+
+  if (!plots.length && loading) return <section className="result-panel state-panel"><div className="spinner" /><h2>Reading Polar-is storage</h2><p>The query may take a moment for a large region or fine resolution.</p></section>;
+  if (!plots.length && !result) return <section className="result-panel state-panel"><div className="empty-orbit" aria-hidden="true" /><h2>No result yet</h2><p>Select a region and data object, then run a query.</p></section>;
+  if (!plots.length && result && !result.groups.length) return <section className="result-panel state-panel"><h2>No matching data</h2><p>Try another region, time interval, or resolution. Review the warnings below for details.</p></section>;
+  if (!plots.length && result?.function === "get-data") return <section className="result-panel state-panel"><h2>Data is ready</h2><p>The query returned {result.groups.reduce((sum, group) => sum + (group.data.kind === "get-data" ? group.data.cell_count : 0), 0).toLocaleString()} spatial cells. Use the download links below to save the NetCDF results.</p></section>;
+
+  const sharedGroups = plots.flatMap((plot) => plot.result.groups.filter(isAreaGroup));
+  return (
+    <section className="result-panel spatial-result-panel">
+      {loading && <div className="plot-loading-banner"><span className="spinner" /> Running the next query…</div>}
+      <div className={`spatial-plot-grid ${layout}`}>
+        {plots.map((snapshot) => {
+          const pinned = pinnedPlots.some((plot) => plot.id === snapshot.id);
+          const areaGroup = snapshot.result.groups.find(isAreaGroup);
+          if (areaGroup) {
+            const range = useSharedScale
+              ? valueRange(sharedGroups, areaGroup)
+              : snapshot.colorRange ?? valueRange(snapshot.result.groups, areaGroup);
+            return <SpatialPlot key={snapshot.id} group={areaGroup} catalog={catalog} range={range} snapshot={snapshot} pinned={pinned} onPin={onPin} onUnpin={onUnpin} />;
+          }
+          return <TimePlot key={snapshot.id} result={snapshot.result} catalog={catalog} snapshot={snapshot} pinned={pinned} onPin={onPin} onUnpin={onUnpin} />;
+        })}
+      </div>
+    </section>
+  );
 }

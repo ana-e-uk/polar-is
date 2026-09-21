@@ -43,7 +43,8 @@ export default function RegionPicker({ region, onChange }: Props) {
 
   useEffect(() => {
     if (!elementRef.current || mapRef.current) return;
-    const map = L.map(elementRef.current, { minZoom: 1 }).setView([35, 0], 1);
+    const mapElement = elementRef.current;
+    const map = L.map(mapElement, { minZoom: 1 }).setView([65, -35], 3);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "&copy; OpenStreetMap contributors",
       maxZoom: 18,
@@ -125,7 +126,15 @@ export default function RegionPicker({ region, onChange }: Props) {
 
     mapRef.current = map;
     layerRef.current = layers;
+    let resizeFrame = 0;
+    const resizeObserver = new ResizeObserver(() => {
+      window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = window.requestAnimationFrame(() => map.invalidateSize({ pan: false }));
+    });
+    resizeObserver.observe(mapElement);
     return () => {
+      resizeObserver.disconnect();
+      window.cancelAnimationFrame(resizeFrame);
       map.remove();
       mapRef.current = null;
       layerRef.current = null;
