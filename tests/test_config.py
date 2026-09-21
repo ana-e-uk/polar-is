@@ -31,3 +31,15 @@ def test_combined_dataset_uses_daily_era5_grid_configuration():
     assert combined["temporal_resolution"] == "1D"
     assert combined["minimum_daily_coverage"] == 0.75
     assert combined["regridding_method"] == "bilinear"
+
+
+def test_frontend_titles_are_loaded_from_configuration():
+    titles = get_settings().frontend_titles
+
+    assert titles["repository"]["copernicusclimatedatastore"] == (
+        "Copernicus Climate Data Store"
+    )
+    assert titles["variable"]["sea_surface_temperature"] == (
+        "Sea Surface Temperature"
+    )
+    assert titles["resolution"]["0.25"]["coarsen-4"] == [1.0]
