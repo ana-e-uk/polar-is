@@ -6,6 +6,7 @@ import xarray as xr
 
 from storage.ingest_data.standardize import (
     get_standard_var_name,
+    remove_singleton_source_coordinates,
     standardize,
 )
 from storage.grid_topology import add_grid_topology
@@ -40,6 +41,24 @@ def test_standard_variable_name_can_already_match():
 
     assert standardized.identical(dataset)
     assert variable_name == "sea_surface_temperature"
+
+
+def test_singleton_source_coordinate_becomes_provenance_attribute():
+    data = xr.Dataset(
+        {"value": (("number", "timestamp", "y", "x"), np.ones((1, 1, 1, 1)))},
+        coords={
+            "number": [0],
+            "timestamp": pd.date_range("2020-01-01", periods=1),
+            "latitude": ("y", [10.0]),
+            "longitude": ("x", [20.0]),
+        },
+    )
+
+    result = remove_singleton_source_coordinates(data)
+
+    assert "number" not in result.coords
+    assert "number" not in result.dims
+    assert result.attrs["polaris_source_coordinate_number"] == 0
 
 
 def test_standardize_renames_variable_and_preserves_compression(tmp_path):
@@ -107,7 +126,7 @@ def test_standardize_renames_variable_and_preserves_compression(tmp_path):
         assert encoding["complevel"] == 3
 
 
-def test_native_topology_assigns_global_indices_and_rectilinear_bounds():
+def test_native_grid_adds_rectilinear_bounds_without_per_cell_indices():
     data = xr.Dataset(
         {"value": (("timestamp", "y", "x"), np.zeros((1, 2, 3)))},
         coords={
@@ -119,8 +138,10 @@ def test_native_topology_assigns_global_indices_and_rectilinear_bounds():
     result, grid_type = add_grid_topology(data, "value", "rectilinear")
 
     assert grid_type == "rectilinear"
-    np.testing.assert_array_equal(result["source_y_index"], [0, 1])
-    np.testing.assert_array_equal(result["source_x_index"], [0, 1, 2])
+    assert "source_y_index" not in result.coords
+    assert "source_x_index" not in result.coords
+    assert "grid_y_index" not in result.coords
+    assert "grid_x_index" not in result.coords
     np.testing.assert_allclose(result["latitude_bounds"], [[9, 11], [11, 13]])
     np.testing.assert_allclose(
         result["longitude_bounds"], [[18, 22], [22, 26], [26, 30]]

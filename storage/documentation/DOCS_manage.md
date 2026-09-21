@@ -1,40 +1,18 @@
-# System management
+# Managing Polar-is storage
 
-## Spatial containers
+The canonical geographic bucket grid in `config.yaml` is a lookup aid, not a
+physical storage hierarchy. Each canonical data grid has one JSONL lookup mapping
+bucket IDs to one or more rectangular grid windows.
 
-`container_grid` in `config.yaml` defines the authoritative capacity-1
-regular longitude/latitude partition. `container_schemes` defines the storage,
-metadata, definition path, and integer factor for every capacity.
+Physical storage consists of:
 
-`storage/manage/space_containers.py` derives all coarser definitions from
-capacity 1. Coarse row and column counts use ceiling division, so the final
-row or column is clipped at the global latitude/longitude maximum when a
-factor does not divide the base grid dimensions.
+- `catalogs/grids.jsonl` and reusable grid NetCDF files;
+- `catalogs/datasets.jsonl` for dataset-variant metadata;
+- `bucket_lookup/<grid_id>.jsonl` for spatial lookup;
+- `products/.../*.nc` for time partitions;
+- `metadata.jsonl` for the shared product index.
 
-Each definition contains:
-
-- `id`, `code`, `container`, and `factor`
-- `row` and `col`
-- canonical longitude/latitude `bounds`
-- `data`, the derived count of direct NetCDF block files
-
-`map_containers()` classifies each native `(y, x)` cell by its longitude and
-latitude center without reprojecting the data. Rectilinear and curvilinear
-coordinates are supported.
-
-## Block metadata
-
-Every block record uses metadata schema version 3 and contains the source
-dataset fields plus:
-
-- `spatial_level`, `bucket_code`, and `bucket_id`
-- `block_id` and `product_type`
-- native and resulting temporal/spatial resolutions
-- `coarseness_factor`
-- temporal and spatial aggregation methods
-- aggregation order/version
-- `block_summary` with cell-center bounds and scientific-variable extrema
-
-Block paths are derived from the spatial level, bucket ID, and block ID.
-Bucket codes and IDs are local to a spatial level. The composite
-`(spatial_level, bucket_code)` is the globally meaningful bucket identity.
+Catalog and partition identifiers are deterministic. Index paths are relative to
+the storage root. Regeneration should be performed only after standardized inputs
+and the xESMF-capable environment have been verified; remove the previous stored
+data only after the replacement build validates successfully.

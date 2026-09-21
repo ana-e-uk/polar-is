@@ -4,15 +4,16 @@ from __future__ import annotations
 import calendar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import lru_cache
 import json
 import math
+from pathlib import Path
 import re
 from typing import Any, Mapping
 
-from polaris.config import ContainerScheme, Settings, get_settings
+from polaris.config import Settings, get_settings
 from storage.manage.space_containers import (
     container_definitions,
-    grid_for_scheme,
 )
 
 
@@ -82,13 +83,16 @@ class RequestedDataGrid:
 
 @dataclass(frozen=True)
 class MatchingBlockGroup:
-    """Blocks from one source and parameter combination."""
+    """Time partitions from one dataset variant and product grid."""
 
     repository: str
     dataset: str
     variable: str
     additional_parameters: dict[str, Any]
     blocks: tuple[dict[str, Any], ...]
+    dataset_variant_id: str = ""
+    grid_id: str = ""
+    grid_window: tuple[int, int, int, int] = (0, 0, 0, 0)
 
 
 CoverageCell = tuple[str, datetime]
@@ -115,11 +119,10 @@ class CoverageResult:
 
 @dataclass(frozen=True)
 class QueryPlan:
-    """Selected and grouped blocks plus their coverage at the requested grid."""
+    """Selected and grouped partitions plus their requested grid windows."""
 
     query: Query
     requested_data_grid: RequestedDataGrid
-    spatial_level: ContainerScheme
     index_records: tuple[dict[str, Any], ...]
     overlapping_bucket_ids: tuple[str, ...]
     matching_blocks: tuple[dict[str, Any], ...]
@@ -304,7 +307,7 @@ def normalize_query(
         and not raw_coarseness_factor.is_integer()
     ):
         raise ValueError("coarseness_factor must be an integer")
-    if coarseness_factor not in settings.coarseness_to_spatial_level:
+    if coarseness_factor not in settings.supported_coarseness_factors:
         raise ValueError(f"Unsupported coarseness factor: {coarseness_factor!r}")
 
     time_unit = query["time_unit"]
@@ -396,28 +399,6 @@ def determine_requested_data_grid(query: Query) -> RequestedDataGrid:
     return RequestedDataGrid(query.coarseness_factor, query.time_unit)
 
 
-def map_grid_to_spatial_level(
-    requested_data_grid: RequestedDataGrid,
-    settings: Settings | None = None,
-) -> ContainerScheme:
-    """Return the configured spatial level for the requested coarseness."""
-    settings = settings or get_settings()
-    return settings.coarseness_to_spatial_level[
-        requested_data_grid.coarseness_factor
-    ]
-
-
-def read_spatial_level_index(
-    spatial_level: ContainerScheme,
-) -> tuple[dict[str, Any], ...]:
-    """Read the JSONL index configured for one spatial level."""
-    records = []
-    with spatial_level.metadata.open() as file:
-        for line in file:
-            if line.strip():
-                records.append(json.loads(line))
-    return tuple(records)
-
 
 def _longitude_intervals(region: BoundingBox) -> tuple[tuple[float, float], ...]:
     if region.west < region.east:
@@ -427,38 +408,6 @@ def _longitude_intervals(region: BoundingBox) -> tuple[tuple[float, float], ...]
     return ((0.0, 360.0),)
 
 
-def _get_overlap_of_query_region_and_containers(
-    region: BoundingBox,
-    spatial_level: ContainerScheme,
-    settings: Settings | None = None,
-) -> tuple[str, ...]:
-    """Calculate bucket IDs whose fixed bounds overlap the query region."""
-    settings = settings or get_settings()
-    grid = grid_for_scheme(spatial_level, settings.container_grid)
-    definitions = container_definitions(grid)
-    longitude_intervals = _longitude_intervals(region)
-    overlapping = []
-    for bucket_id, definition in definitions.items():
-        bounds = definition["bounds"]
-        latitude_overlaps = (
-            bounds["lat_min"] <= region.north
-            and bounds["lat_max"] > region.south
-        )
-        longitude_overlaps = any(
-            bounds["lon_min"] <= east and bounds["lon_max"] > west
-            for west, east in longitude_intervals
-        )
-        if latitude_overlaps and longitude_overlaps:
-            overlapping.append(bucket_id)
-    return tuple(overlapping)
-
-
-def _record_matches_time_unit(record: Mapping[str, Any], time_unit: str) -> bool:
-    if time_unit == "Source":
-        return record.get("product_type") == "native"
-    return record.get("temporal_resolution") == _TIME_UNIT_TO_RESOLUTION[time_unit]
-
-
 def _record_overlaps_time(record: Mapping[str, Any], query: Query) -> bool:
     try:
         block_start = datetime.fromisoformat(record["time_start"])
@@ -466,94 +415,6 @@ def _record_overlaps_time(record: Mapping[str, Any], query: Query) -> bool:
     except (KeyError, TypeError, ValueError):
         return False
     return block_start <= query.time_end and block_end >= query.time_start
-
-
-def _filter_containers(
-    records: tuple[dict[str, Any], ...],
-    query: Query,
-    requested_data_grid: RequestedDataGrid,
-    overlapping_bucket_ids: tuple[str, ...],
-) -> tuple[dict[str, Any], ...]:
-    """Apply the combined metadata filter to one spatial-level index."""
-    bucket_ids = set(overlapping_bucket_ids)
-    matches = []
-    for record in records:
-        record_parameters = record.get("additional_parameters") or {}
-        matches_parameters = all(
-            record_parameters.get(name) == value
-            for name, value in query.additional_parameters.items()
-        )
-        if (
-            record.get("bucket_id") in bucket_ids
-            and record.get("variable") == query.variable
-            and record.get("coarseness_factor")
-            == requested_data_grid.coarseness_factor
-            and _record_matches_time_unit(record, requested_data_grid.time_unit)
-            and (
-                query.repository is None
-                or record.get("repository") == query.repository
-            )
-            and (query.dataset is None or record.get("dataset") == query.dataset)
-            and matches_parameters
-            and _record_overlaps_time(record, query)
-        ):
-            matches.append(record)
-    return tuple(matches)
-
-
-def _refine_spatial_overlap(
-    records: tuple[dict[str, Any], ...],
-    region: BoundingBox,
-) -> tuple[dict[str, Any], ...]:
-    """Remove blocks whose exact cell-center bounds miss the query region.
-
-    Assumes query region and blocks are rectangular bounding boxes.
-    """
-    longitude_intervals = _longitude_intervals(region)
-    matches = []
-    for record in records:
-        summary = record.get("block_summary") or {}
-        try:
-            latitude_overlaps = (
-                summary["lat_min"] <= region.north
-                and summary["lat_max"] >= region.south
-            )
-            longitude_overlaps = any(
-                summary["lon_min"] <= east and summary["lon_max"] >= west
-                for west, east in longitude_intervals
-            )
-        except (KeyError, TypeError):
-            continue
-        if latitude_overlaps and longitude_overlaps:
-            matches.append(record)
-    return tuple(matches)
-
-
-def _group_matching_blocks(
-    records: tuple[dict[str, Any], ...],
-) -> tuple[MatchingBlockGroup, ...]:
-    grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
-    parameters_by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-    for record in records:
-        parameters = record.get("additional_parameters") or {}
-        key = (
-            record["repository"],
-            record["dataset"],
-            record["variable"],
-            json.dumps(parameters, sort_keys=True, separators=(",", ":")),
-        )
-        grouped.setdefault(key, []).append(record)
-        parameters_by_key.setdefault(key, dict(parameters))
-    return tuple(
-        MatchingBlockGroup(
-            repository=key[0],
-            dataset=key[1],
-            variable=key[2],
-            additional_parameters=parameters_by_key[key],
-            blocks=tuple(blocks),
-        )
-        for key, blocks in grouped.items()
-    )
 
 
 def _first_time_label(start: datetime, resolution: str) -> datetime:
@@ -597,18 +458,6 @@ def _expected_timestamps(
     return tuple(timestamps)
 
 
-def _coverage_resolution(
-    requested_data_grid: RequestedDataGrid,
-    group: MatchingBlockGroup,
-) -> str | None:
-    if requested_data_grid.time_unit != "Source":
-        return _TIME_UNIT_TO_RESOLUTION[requested_data_grid.time_unit]
-    resolutions = {
-        record.get("temporal_resolution") for record in group.blocks
-    }
-    return resolutions.pop() if len(resolutions) == 1 else None
-
-
 def _coverage_group_name(group: MatchingBlockGroup) -> str:
     parameters = json.dumps(
         group.additional_parameters,
@@ -618,74 +467,150 @@ def _coverage_group_name(group: MatchingBlockGroup) -> str:
     return f"{group.repository}/{group.dataset}/{group.variable}/{parameters}"
 
 
-def check_spatiotemporal_coverage(
+@lru_cache(maxsize=64)
+def _cached_jsonl(path: str, modified_ns: int, size: int) -> tuple[dict[str, Any], ...]:
+    del modified_ns, size
+    return tuple(
+        json.loads(line)
+        for line in Path(path).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    )
+
+
+def _read_jsonl(path) -> tuple[dict[str, Any], ...]:
+    if not path.exists():
+        return ()
+    status = path.stat()
+    return _cached_jsonl(str(path), status.st_mtime_ns, status.st_size)
+
+
+def _overlapping_base_buckets(
+    region: BoundingBox,
+    settings: Settings,
+) -> tuple[str, ...]:
+    from storage.manage.space_containers import container_grid
+
+    grid = container_grid("buckets", 1, **settings.container_grid)
+    definitions = container_definitions(grid)
+    longitude_intervals = _longitude_intervals(region)
+    return tuple(
+        bucket_id
+        for bucket_id, definition in definitions.items()
+        if definition["bounds"]["lat_min"] <= region.north
+        and definition["bounds"]["lat_max"] > region.south
+        and any(
+            definition["bounds"]["lon_min"] <= east
+            and definition["bounds"]["lon_max"] > west
+            for west, east in longitude_intervals
+        )
+    )
+
+
+def _intersect_window(
+    partition: Mapping[str, Any],
+    lookup: Mapping[str, Any],
+) -> dict[str, int | str] | None:
+    y_start = max(partition["grid_y_start"], lookup["grid_y_start"])
+    y_stop = min(partition["grid_y_stop"], lookup["grid_y_stop"])
+    x_start = max(partition["grid_x_start"], lookup["grid_x_start"])
+    x_stop = min(partition["grid_x_stop"], lookup["grid_x_stop"])
+    if y_stop <= y_start or x_stop <= x_start:
+        return None
+    return {
+        "bucket_id": lookup["bucket_id"],
+        "grid_y_start": y_start,
+        "grid_y_stop": y_stop,
+        "grid_x_start": x_start,
+        "grid_x_stop": x_stop,
+    }
+
+
+def _group_partitions(
+    records: tuple[dict[str, Any], ...],
+) -> tuple[MatchingBlockGroup, ...]:
+    grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    for record in records:
+        key = (
+            record["dataset_variant_id"],
+            record["variable"],
+            record["grid_id"],
+            record["temporal_resolution"],
+        )
+        grouped.setdefault(key, []).append(record)
+    results = []
+    for key, partitions in grouped.items():
+        windows = [
+            window
+            for partition in partitions
+            for window in partition["query_windows"]
+        ]
+        results.append(
+            MatchingBlockGroup(
+                repository=partitions[0]["repository"],
+                dataset=partitions[0]["dataset"],
+                variable=key[1],
+                additional_parameters=partitions[0]["additional_parameters"],
+                blocks=tuple(partitions),
+                dataset_variant_id=key[0],
+                grid_id=key[2],
+                grid_window=(
+                    min(window["grid_y_start"] for window in windows),
+                    max(window["grid_y_stop"] for window in windows),
+                    min(window["grid_x_start"] for window in windows),
+                    max(window["grid_x_stop"] for window in windows),
+                ),
+            )
+        )
+    return tuple(results)
+
+
+def _partition_coverage(
     query: Query,
     requested_data_grid: RequestedDataGrid,
     overlapping_bucket_ids: tuple[str, ...],
-    block_groups: tuple[MatchingBlockGroup, ...],
+    groups: tuple[MatchingBlockGroup, ...],
 ) -> CoverageResult:
-    """Create sparse hit and miss sets at the exact requested data grid."""
-    if not block_groups:
-        warning = (
-            "No matching data blocks exist at the exact requested data grid. "
-            "Try coarser spatial and/or temporal resolutions."
-        )
-        unmatched_misses: frozenset[CoverageCell] = frozenset()
-        if requested_data_grid.time_unit != "Source":
-            resolution = _TIME_UNIT_TO_RESOLUTION[requested_data_grid.time_unit]
-            timestamps = _expected_timestamps(query, resolution)
-            unmatched_misses = frozenset(
-                (bucket_id, timestamp)
-                for bucket_id in overlapping_bucket_ids
-                for timestamp in timestamps
-            )
-        return CoverageResult((), unmatched_misses, (warning,))
-
-    coverage_groups = []
+    if not groups:
+        warning = "No matching product partitions exist at the exact requested grid."
+        return CoverageResult((), frozenset(), (warning,))
+    results = []
     warnings = []
-    for group in block_groups:
-        resolution = _coverage_resolution(requested_data_grid, group)
+    for group in groups:
+        if requested_data_grid.time_unit == "Source":
+            resolutions = {
+                partition.get("source_temporal_resolution")
+                for partition in group.blocks
+            }
+            resolution = resolutions.pop() if len(resolutions) == 1 else None
+        else:
+            resolution = _TIME_UNIT_TO_RESOLUTION[requested_data_grid.time_unit]
         if resolution is None:
             warning = (
-                f"Cannot check coverage for {_coverage_group_name(group)} "
-                "because it has multiple native time resolutions."
+                f"Cannot check source coverage for {_coverage_group_name(group)}."
             )
-            coverage_groups.append(
+            results.append(
                 BlockGroupCoverage(group, frozenset(), frozenset(), (warning,))
             )
             warnings.append(warning)
             continue
-
-        try:
-            timestamps = _expected_timestamps(query, resolution)
-        except ValueError:
-            warning = (
-                f"Cannot check coverage for {_coverage_group_name(group)} "
-                f"at unsupported resolution {resolution!r}."
-            )
-            coverage_groups.append(
-                BlockGroupCoverage(group, frozenset(), frozenset(), (warning,))
-            )
-            warnings.append(warning)
-            continue
-
+        timestamps = _expected_timestamps(query, resolution)
         expected = frozenset(
             (bucket_id, timestamp)
             for bucket_id in overlapping_bucket_ids
             for timestamp in timestamps
         )
         hits = set()
-        for block in group.blocks:
-            try:
-                block_start = datetime.fromisoformat(block["time_start"])
-                block_end = datetime.fromisoformat(block["time_end"])
-                bucket_id = block["bucket_id"]
-            except (KeyError, TypeError, ValueError):
-                continue
+        for partition in group.blocks:
+            start = datetime.fromisoformat(partition["time_start"])
+            end = datetime.fromisoformat(partition["time_end"])
+            buckets = {
+                window["bucket_id"] for window in partition["query_windows"]
+            }
             hits.update(
                 (bucket_id, timestamp)
+                for bucket_id in buckets
                 for timestamp in timestamps
-                if block_start <= timestamp <= block_end
+                if start <= timestamp <= end
             )
         hit_set = frozenset(hits) & expected
         miss_set = expected - hit_set
@@ -693,66 +618,100 @@ def check_spatiotemporal_coverage(
         if miss_set:
             warning = (
                 f"{_coverage_group_name(group)} is missing {len(miss_set)} "
-                f"of {len(expected)} bucket/time cells at the exact requested grid."
+                f"of {len(expected)} bucket/time cells."
             )
             group_warnings = (warning,)
             warnings.append(warning)
-        coverage_groups.append(
+        results.append(
             BlockGroupCoverage(group, hit_set, miss_set, group_warnings)
         )
-    return CoverageResult(tuple(coverage_groups), frozenset(), tuple(warnings))
+    return CoverageResult(tuple(results), frozenset(), tuple(warnings))
 
 
 def plan_query(
     query: Query | Mapping[str, Any],
     settings: Settings | None = None,
 ) -> QueryPlan:
-    """Build the initial plan using only the requested spatial level."""
+    """Plan against the shared product index and per-grid bucket lookups."""
     settings = settings or get_settings()
-    normalized_query = (
-        query if isinstance(query, Query) else normalize_query(query, settings)
-    )
-    requested_data_grid = determine_requested_data_grid(normalized_query)
-    spatial_level = map_grid_to_spatial_level(requested_data_grid, settings)
-    index_records = read_spatial_level_index(spatial_level)
-    overlapping_bucket_ids = _get_overlap_of_query_region_and_containers(
-        normalized_query.region,
-        spatial_level,
-        settings,
-    )
-    matching_blocks = _filter_containers(
-        index_records,
-        normalized_query,
-        requested_data_grid,
-        overlapping_bucket_ids,
-    )
-    matching_blocks = _refine_spatial_overlap(
-        matching_blocks,
-        normalized_query.region,
-    )
-    block_groups = _group_matching_blocks(matching_blocks)
-    coverage = check_spatiotemporal_coverage(
-        normalized_query,
-        requested_data_grid,
-        overlapping_bucket_ids,
-        block_groups,
+    normalized = query if isinstance(query, Query) else normalize_query(query, settings)
+    requested = determine_requested_data_grid(normalized)
+    index_records = _read_jsonl(settings.product_index)
+    datasets = {
+        record["dataset_variant_id"]: record
+        for record in _read_jsonl(settings.datasets_catalog)
+    }
+    overlapping_buckets = _overlapping_base_buckets(normalized.region, settings)
+    lookup_cache: dict[str, tuple[dict[str, Any], ...]] = {}
+    matches = []
+    for raw_record in index_records:
+        dataset = datasets.get(raw_record.get("dataset_variant_id"))
+        if dataset is None:
+            continue
+        parameters = dataset.get("additional_parameters") or {}
+        if raw_record.get("variable") != normalized.variable:
+            continue
+        if raw_record.get("coarseness_factor") != requested.coarseness_factor:
+            continue
+        if raw_record.get("temporal_resolution") != requested.time_unit:
+            continue
+        if not _record_overlaps_time(raw_record, normalized):
+            continue
+        if (
+            normalized.repository is not None
+            and dataset["repository"] != normalized.repository
+        ):
+            continue
+        if normalized.dataset is not None and dataset["dataset"] != normalized.dataset:
+            continue
+        if any(
+            parameters.get(name) != value
+            for name, value in normalized.additional_parameters.items()
+        ):
+            continue
+        grid_id = raw_record["grid_id"]
+        if grid_id not in lookup_cache:
+            lookup_cache[grid_id] = _read_jsonl(
+                settings.bucket_lookup_dir / f"{grid_id}.jsonl"
+            )
+        windows = []
+        for lookup in lookup_cache[grid_id]:
+            if lookup["bucket_id"] not in overlapping_buckets:
+                continue
+            intersection = _intersect_window(raw_record, lookup)
+            if intersection is not None:
+                windows.append(intersection)
+        if not windows:
+            continue
+        source_resolution = (
+            dataset.get("variables", {})
+            .get(normalized.variable, {})
+            .get("source_temporal_resolution")
+        )
+        matches.append(
+            {
+                **raw_record,
+                "repository": dataset["repository"],
+                "dataset": dataset["dataset"],
+                "additional_parameters": parameters,
+                "source_temporal_resolution": source_resolution,
+                "query_windows": windows,
+            }
+        )
+    matching = tuple(matches)
+    groups = _group_partitions(matching)
+    coverage = _partition_coverage(
+        normalized,
+        requested,
+        overlapping_buckets,
+        groups,
     )
     return QueryPlan(
-        query=normalized_query,
-        requested_data_grid=requested_data_grid,
-        spatial_level=spatial_level,
+        query=normalized,
+        requested_data_grid=requested,
         index_records=index_records,
-        overlapping_bucket_ids=overlapping_bucket_ids,
-        matching_blocks=matching_blocks,
-        block_groups=block_groups,
+        overlapping_bucket_ids=overlapping_buckets,
+        matching_blocks=matching,
+        block_groups=groups,
         coverage=coverage,
     )
-
-
-def _found_missing_data(missing: dict) -> bool:
-    '''Generates API message about missing data. 
-    Asks user if it should be downloaded and returns answer.'''
-
-
-def _find_coarser_data(space_res: float, temp_res: str):
-    '''Check if any coarser version of the data exists.'''

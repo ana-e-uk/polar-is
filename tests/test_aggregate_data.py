@@ -5,21 +5,24 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
+import pytest
 import xarray as xr
 
-from polaris.config import ContainerScheme
 from storage.ingest_data.aggregate_data import (
     AGGREGATE_STATISTICS,
     add_aggregate_statistics,
     aggregate_record,
     aggregate_records,
-    eligible_temporal_resolutions,
+    combined_product_policy,
     infer_native_temporal_resolution,
+    product_policy,
     spatially_aggregate,
     temporally_aggregate,
 )
-from storage.ingest_data.make_data_blocks import block_path
-from storage.grid_topology import assign_native_grid_indices
+from storage.ingest_data.product_partitions import (
+    _chunk_encoding,
+    write_product_partitions,
+)
 
 
 def _time_dataset(periods=24, frequency="1h"):
@@ -43,19 +46,88 @@ def _time_dataset(periods=24, frequency="1h"):
     )
 
 
-def test_temporal_outputs_are_never_finer_than_native():
-    configured = ["1H", "3H", "1D", "1MS", "1YS"]
-    assert eligible_temporal_resolutions("3H", configured) == [
-        "3H",
-        "1D",
-        "1MS",
-        "1YS",
+def test_product_policy_retains_source_and_only_coarser_products():
+    assert [
+        (product.time_unit, product.coarseness_factor)
+        for product in product_policy("1H")
+    ] == [
+        ("Source", 1),
+        ("Day", 1),
+        ("Month", 1),
+        ("Month", 2),
+        ("Year", 1),
+        ("Year", 2),
     ]
-    assert eligible_temporal_resolutions("1D", configured) == [
-        "1D",
-        "1MS",
-        "1YS",
+    assert [
+        (product.time_unit, product.coarseness_factor)
+        for product in product_policy("3H")
+    ] == [
+        ("Source", 1),
+        ("Day", 1),
+        ("Month", 1),
+        ("Month", 2),
+        ("Year", 1),
+        ("Year", 2),
     ]
+    assert [
+        (product.time_unit, product.coarseness_factor)
+        for product in product_policy("1MS")
+    ] == [
+        ("Source", 1),
+        ("Year", 1),
+        ("Year", 2),
+    ]
+
+
+def test_product_policy_rejects_weekly_source_data():
+    try:
+        product_policy("1W")
+    except ValueError as error:
+        assert "Weekly source data is unsupported" in str(error)
+    else:
+        raise AssertionError("Weekly source data was accepted")
+
+
+def test_product_chunks_bound_spatial_reads():
+    data = xr.Dataset({
+        "value": (
+            ("timestamp", "y", "x"),
+            np.zeros((2, 256, 512), dtype=np.float32),
+        ),
+    })
+
+    chunks = _chunk_encoding(data, 256 * 1024)["value"]["chunksizes"]
+
+    assert chunks == (2, 128, 256)
+    assert np.prod(chunks) * data["value"].dtype.itemsize <= 256 * 1024
+
+
+def test_combined_policy_materializes_daily_monthly_and_yearly_products():
+    assert [
+        (product.time_unit, product.coarseness_factor)
+        for product in combined_product_policy()
+    ] == [
+        ("Day", 1),
+        ("Month", 1),
+        ("Month", 2),
+        ("Year", 1),
+        ("Year", 2),
+    ]
+
+
+def test_source_count_uses_maximum_contributors_when_aggregating():
+    data = add_aggregate_statistics(_time_dataset(24), "value")
+    data["source_count"] = xr.DataArray(
+        np.arange(24 * 3 * 3, dtype=np.int16).reshape(24, 3, 3) % 4,
+        dims=("timestamp", "y", "x"),
+    )
+    daily = temporally_aggregate(data, "value", "1H", "1D", "mean")
+    coarsened = spatially_aggregate(daily, "value", 2, "mean")
+
+    assert daily["source_count"].dtype == np.int16
+    assert daily["source_count"].max().item() == 3
+    assert coarsened["source_count"].dtype == np.int16
+    assert coarsened["source_count"].max().item() == 3
 
 
 def test_native_resolution_is_inferred_from_timestamps():
@@ -79,6 +151,16 @@ def test_temporal_aggregation_requires_complete_target_period():
     )
     assert complete["time_flag"].item() == 0
     assert complete["expver"].item() == "0001"
+
+
+def test_complete_midpoint_timestamps_are_accepted():
+    source = _time_dataset(8, "3h").assign_coords(
+        timestamp=pd.date_range("2020-01-01T01:30", periods=8, freq="3h")
+    )
+    complete = temporally_aggregate(source, "value", "3H", "1D", "mean")
+
+    assert complete.sizes["timestamp"] == 1
+    assert complete["timestamp"].dt.hour.item() == 0
 
 
 def test_native_period_is_retained_without_resampling():
@@ -145,20 +227,23 @@ def test_spatial_aggregation_pads_edges_and_handles_auxiliaries():
     assert result["value"].encoding["complevel"] == 3
 
 
-def test_spatial_aggregation_preserves_global_source_spans():
-    data = assign_native_grid_indices(
-        _time_dataset(1).assign_coords(y=[10.0, 11.0, 12.0], x=[20.0, 21.0, 22.0])
-    )
+def test_spatial_aggregation_uses_local_positions_without_index_coordinates():
+    data = _time_dataset(1)
     result = spatially_aggregate(data, "value", 2, "mean")
 
-    np.testing.assert_array_equal(result["source_y_index"], [0, 2])
-    np.testing.assert_array_equal(result["source_x_index"], [0, 2])
-    np.testing.assert_array_equal(result["source_y_start"], [0, 2])
-    np.testing.assert_array_equal(result["source_y_stop"], [2, 3])
-    np.testing.assert_array_equal(result["source_x_start"], [0, 2])
-    np.testing.assert_array_equal(result["source_x_stop"], [2, 3])
-    np.testing.assert_array_equal(result["grid_y_index"], [0, 1])
-    np.testing.assert_array_equal(result["grid_x_index"], [0, 1])
+    assert all(
+        name not in result.coords
+        for name in (
+            "source_y_index",
+            "source_x_index",
+            "source_y_start",
+            "source_y_stop",
+            "source_x_start",
+            "source_x_stop",
+            "grid_y_index",
+            "grid_x_index",
+        )
+    )
     assert result.attrs["polaris_coarseness_factor"] == 2
 
 
@@ -182,79 +267,122 @@ def test_spatial_mean_uses_area_weights_and_keeps_statistics():
     np.testing.assert_allclose(result["polaris_weighted_sum"], [[[5.0]]])
     np.testing.assert_allclose(result["polaris_weight_sum"], [[[1.5]]])
     assert result["polaris_weight_sum"].dims == ("timestamp", "y", "x")
-    assert result["polaris_valid_count"].item() == 2
     assert result["polaris_min"].item() == 0.0
     assert result["polaris_max"].item() == 10.0
 
 
-def _settings(tmp_path, targets=("1H", "3H")):
-    schemes = {}
-    for factor in (1, 2, 4):
-        name = f"capacity_{factor}"
-        schemes[name] = ContainerScheme(
-            name,
-            factor,
-            tmp_path / name,
-            tmp_path / name / "metadata.jsonl",
-            tmp_path / f"{name}.json",
-        )
+def _settings(tmp_path):
     return SimpleNamespace(
         aggregation_methods={"value": {"temporal": "mean", "spatial": "mean"}},
-        temporal_aggregation_resolutions=targets,
-        container_schemes=schemes,
+        grids_dir=tmp_path / "catalogs" / "grids",
+        grids_catalog=tmp_path / "catalogs" / "grids.jsonl",
+        datasets_catalog=tmp_path / "catalogs" / "datasets.jsonl",
+        bucket_lookup_dir=tmp_path / "bucket_lookup",
+        products_dir=tmp_path / "products",
+        product_index=tmp_path / "metadata.jsonl",
         container_grid={
             "lon_min": 0,
             "lat_min": -90,
             "lon_size": 60,
             "lat_size": 30,
         },
+        combined_dataset={"repository": "polaris", "dataset": "combined"},
     )
 
 
-def test_every_capacity_time_combination_uses_write_blocks(tmp_path):
+def test_aggregation_path_uses_reduced_product_policy(tmp_path):
     source = tmp_path / "source.nc"
-    _time_dataset(6).to_netcdf(source)
+    source_data = _time_dataset(366, "1D").drop_vars(
+        ["latitude", "longitude"]
+    ).assign_coords(
+        latitude=("y", [0.0, 1.0, 2.0]),
+        longitude=("x", [10.0, 11.0, 12.0]),
+    )
+    source_data.to_netcdf(source)
     record = {
         "dataset": "test",
         "variable": "value",
         "spatial_resolution": 1.0,
-        "temporal_resolution": "1H",
+        "temporal_resolution": "1D",
+        "grid_type": "rectilinear",
         "file_path": str(source),
     }
     settings = _settings(tmp_path)
     calls = []
 
-    def capture(data, record, scheme, **kwargs):
+    def capture(data, record, **kwargs):
         calls.append(
             (
-                scheme.name,
-                kwargs["product_metadata"]["temporal_resolution"],
-                kwargs["product_metadata"]["coarseness_factor"],
+                kwargs["time_unit"],
+                kwargs["temporal_resolution"],
+                kwargs["coarseness_factor"],
                 data.sizes["timestamp"],
             )
         )
         return []
 
     with patch(
-        "storage.ingest_data.aggregate_data.write_blocks",
+        "storage.ingest_data.aggregate_data.write_product_partitions",
         side_effect=capture,
     ):
         aggregate_record(record, settings=settings)
 
     assert calls == [
-        ("capacity_1", "1H", 1, 6),
-        ("capacity_2", "1H", 2, 6),
-        ("capacity_4", "1H", 4, 6),
-        ("capacity_1", "3H", 1, 2),
-        ("capacity_2", "3H", 2, 2),
-        ("capacity_4", "3H", 4, 2),
+        ("Source", "1D", 1, 366),
+        ("Month", "1MS", 1, 12),
+        ("Month", "1MS", 2, 12),
+        ("Year", "1YS", 1, 1),
+        ("Year", "1YS", 2, 1),
     ]
 
 
-def test_small_end_to_end_hierarchy_writes_each_capacity_and_time(tmp_path):
+@pytest.mark.parametrize("frequency, resolution", [("1h", "1H"), ("3h", "3H")])
+def test_native_subdaily_values_are_retained_as_source(
+    tmp_path, frequency, resolution
+):
+    source = tmp_path / f"source-{resolution}.nc"
+    source_data = _time_dataset(8, frequency).drop_vars(
+        ["latitude", "longitude"]
+    ).assign_coords(
+        latitude=("y", [0.0, 1.0, 2.0]),
+        longitude=("x", [10.0, 11.0, 12.0]),
+    )
+    source_data.to_netcdf(source)
+    record = {
+        "dataset": "test",
+        "variable": "value",
+        "temporal_resolution": resolution,
+        "grid_type": "rectilinear",
+        "file_path": str(source),
+    }
+    source_products = []
+
+    def capture(data, _record, **kwargs):
+        if kwargs["time_unit"] == "Source":
+            source_products.append(data.load())
+        assert kwargs["time_unit"] != "Hour"
+        return []
+
+    with patch(
+        "storage.ingest_data.aggregate_data.write_product_partitions",
+        side_effect=capture,
+    ):
+        aggregate_record(record, settings=_settings(tmp_path))
+
+    assert len(source_products) == 1
+    xr.testing.assert_equal(source_products[0]["value"], source_data["value"])
+    xr.testing.assert_equal(
+        source_products[0]["timestamp"], source_data["timestamp"]
+    )
+
+
+def test_small_end_to_end_hierarchy_writes_product_partitions(tmp_path):
     source = tmp_path / "source.nc"
-    source_data = _time_dataset(6).assign_coords(
-        longitude=(("y", "x"), np.full((3, 3), 10.0))
+    source_data = _time_dataset(31, "1D").drop_vars(
+        ["latitude", "longitude"]
+    ).assign_coords(
+        latitude=("y", [0.0, 1.0, 2.0]),
+        longitude=("x", [10.0, 11.0, 12.0]),
     )
     source_data.to_netcdf(source)
     record = {
@@ -262,34 +390,104 @@ def test_small_end_to_end_hierarchy_writes_each_capacity_and_time(tmp_path):
         "dataset": "test",
         "variable": "value",
         "coordinates": [-90, 90, 0, 360],
-        "grid_type": "curvilinear",
+        "grid_type": "rectilinear",
         "spatial_resolution": 1.0,
-        "temporal_resolution": "1H",
+        "temporal_resolution": "1D",
         "file_path": str(source),
     }
     settings = _settings(tmp_path)
-    settings.container_grid.update({"lon_size": 180, "lat_size": 90})
+    written = aggregate_record(record, settings=settings)
+
+    assert len(written) == 3
+    records = [
+        json.loads(line)
+        for line in settings.product_index.read_text().splitlines()
+    ]
+    assert {
+        (item["temporal_resolution"], item["coarseness_factor"])
+        for item in records
+    } == {("Source", 1), ("Month", 1), ("Month", 2)}
+    for item in records:
+        path = tmp_path / item["relative_path"]
+        assert path.is_file()
+        with xr.open_dataset(path) as partition:
+            assert partition.attrs["grid_id"] == item["grid_id"]
+            assert "latitude" not in partition.coords
+            assert "longitude" not in partition.coords
+            if item["temporal_resolution"] == "Source":
+                assert "value" in partition
+                assert all(name not in partition for name in AGGREGATE_STATISTICS)
+            else:
+                assert "value" not in partition
+                assert all(name in partition for name in AGGREGATE_STATISTICS)
+
+
+def test_combined_aggregation_stores_day_instead_of_source(tmp_path):
+    source = tmp_path / "combined.nc"
+    source_data = _time_dataset(31, "1D").drop_vars(
+        ["latitude", "longitude"]
+    ).assign_coords(
+        latitude=("y", [0.0, 1.0, 2.0]),
+        longitude=("x", [10.0, 11.0, 12.0]),
+    )
+    source_data["source_count"] = xr.ones_like(
+        source_data["value"], dtype=np.int16
+    )
+    source_data.to_netcdf(source)
+    record = {
+        "repository": "polaris",
+        "dataset": "combined",
+        "variable": "value",
+        "spatial_resolution": 1.0,
+        "temporal_resolution": "1D",
+        "grid_type": "rectilinear",
+        "file_path": str(source),
+    }
+    settings = _settings(tmp_path)
 
     written = aggregate_record(record, settings=settings)
 
-    assert len(written) == 6
-    for factor, scheme in zip((1, 2, 4), settings.container_schemes.values()):
-        records = [json.loads(line) for line in scheme.metadata.read_text().splitlines()]
-        assert {item["temporal_resolution"] for item in records} == {"1H", "3H"}
-        assert {item["coarseness_factor"] for item in records} == {factor}
-        assert all(item["spatial_level"] == scheme.name for item in records)
-        assert all(
-            block_path(scheme, item["bucket_id"], item["block_id"]).is_file()
-            for item in records
+    assert {
+        (item["temporal_resolution"], item["coarseness_factor"])
+        for item in written
+    } == {("Day", 1), ("Month", 1), ("Month", 2)}
+    day = next(item for item in written if item["temporal_resolution"] == "Day")
+    with xr.open_dataset(tmp_path / day["relative_path"]) as stored:
+        assert "value" not in stored
+        assert set(AGGREGATE_STATISTICS) <= set(stored.data_vars)
+        assert stored["source_count"].dtype == np.int16
+
+
+def test_dataset_catalog_merges_variables_for_one_variant(tmp_path):
+    settings = _settings(tmp_path)
+    timestamps = pd.date_range("2020-01-01", periods=1)
+    base_record = {
+        "repository": "test",
+        "dataset": "multi",
+        "temporal_resolution": "1D",
+    }
+    for variable in ("first", "second"):
+        data = xr.Dataset(
+            {variable: (("timestamp", "y", "x"), [[[1.0]]], {"units": "K"})},
+            coords={"timestamp": timestamps},
         )
-        assert all(item["block_summary"]["var_min"] is not None for item in records)
-        for item in records:
-            path = block_path(scheme, item["bucket_id"], item["block_id"])
-            with xr.open_dataset(path) as block:
-                if item["product_type"] == "aggregate":
-                    assert all(name in block for name in AGGREGATE_STATISTICS)
-                else:
-                    assert all(name not in block for name in AGGREGATE_STATISTICS)
+        write_product_partitions(
+            data,
+            {**base_record, "variable": variable},
+            grid_id="0123456789abcdef0123456789abcdef",
+            grid_shape=(1, 1),
+            time_unit="Source",
+            temporal_resolution="1D",
+            coarseness_factor=1,
+            settings=settings,
+        )
+
+    records = [
+        json.loads(line)
+        for line in settings.datasets_catalog.read_text().splitlines()
+    ]
+    assert len(records) == 1
+    assert set(records[0]["variables"]) == {"first", "second"}
 
 
 def test_source_cleanup_occurs_only_after_all_records_succeed(tmp_path):

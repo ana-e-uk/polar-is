@@ -47,7 +47,19 @@ export default function App() {
       setCatalog(next);
       const repositories = next.repositories.filter((item) => item.datasets.length);
       const variables = Array.from(new Set(repositories.flatMap((repo) => repo.datasets.flatMap((dataset) => dataset.variables)))).sort();
-      setForm((current) => ({ ...current, variable: variables[0] ?? "", coarseness_factor: next.coarseness_factors.includes(4) ? 4 : next.coarseness_factors.at(-1) ?? 1 }));
+      const variable = variables[0] ?? "";
+      const products = repositories.flatMap((repository) => repository.datasets)
+        .flatMap((dataset) => dataset.available_products ?? [])
+        .filter((product) => product.variable === variable);
+      const product = products.find((item) => item.time_unit === "Day" && item.coarseness_factor === 1)
+        ?? products.find((item) => item.time_unit === "Source" && item.coarseness_factor === 1)
+        ?? products[0];
+      setForm((current) => ({
+        ...current,
+        variable,
+        time_unit: product?.time_unit ?? current.time_unit,
+        coarseness_factor: product?.coarseness_factor ?? next.coarseness_factors[0] ?? 1,
+      }));
     }).catch((reason: Error) => setError(reason.message));
   }, []);
 

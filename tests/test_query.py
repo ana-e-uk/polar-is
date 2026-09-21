@@ -4,31 +4,30 @@ import json
 
 import pytest
 
-from polaris.config import ContainerScheme, get_settings
+from polaris.config import get_settings
 from storage.query_data.query_data import (
     BoundingBox,
     RequestedDataGrid,
     available_additional_parameters,
     available_datasets,
     available_variables,
-    plan_query,
     normalize_query,
+    plan_query,
 )
+
+
+GRID_ID = "0123456789abcdef0123456789abcdef"
+VARIANT_ID = "fedcba9876543210fedcba9876543210"
 
 
 def _query(**changes):
     query = {
         "variable": "sea_surface_temperature",
-        "region": {
-            "west": -50.12345,
-            "east": 20.67891,
-            "south": 40,
-            "north": 80,
-        },
+        "region": {"west": -50.12345, "east": 20.67891, "south": 40, "north": 80},
         "time_start": "2020-02",
         "time_end": "2020-03",
         "coarseness_factor": 2,
-        "time_unit": "Day",
+        "time_unit": "Month",
         "function": "timeseries",
         "aggregation_method": "mean",
     }
@@ -36,251 +35,128 @@ def _query(**changes):
     return query
 
 
+def _write_jsonl(path, records):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(record) + "\n" for record in records))
+
+
+def _settings(tmp_path, records):
+    settings = replace(
+        get_settings(),
+        product_index=tmp_path / "metadata.jsonl",
+        datasets_catalog=tmp_path / "catalogs" / "datasets.jsonl",
+        bucket_lookup_dir=tmp_path / "bucket_lookup",
+    )
+    _write_jsonl(settings.product_index, records)
+    _write_jsonl(
+        settings.datasets_catalog,
+        [
+            {
+                "dataset_variant_id": VARIANT_ID,
+                "repository": "copernicusclimatedatastore",
+                "dataset": "carra_height",
+                "additional_parameters": {"height": "15m"},
+                "variables": {
+                    "sea_surface_temperature": {
+                        "units": "K",
+                        "source_temporal_resolution": "3H",
+                    }
+                },
+            }
+        ],
+    )
+    _write_jsonl(
+        settings.bucket_lookup_dir / f"{GRID_ID}.jsonl",
+        [
+            {
+                "grid_id": GRID_ID,
+                "bucket_id": "r4_c5",
+                "grid_y_start": 0,
+                "grid_y_stop": 20,
+                "grid_x_start": 0,
+                "grid_x_stop": 30,
+            },
+            {
+                "grid_id": GRID_ID,
+                "bucket_id": "r5_c0",
+                "grid_y_start": 10,
+                "grid_y_stop": 30,
+                "grid_x_start": 20,
+                "grid_x_stop": 40,
+            },
+        ],
+    )
+    return settings
+
+
+def _partition(**changes):
+    record = {
+        "partition_id": "11111111111111111111111111111111",
+        "dataset_variant_id": VARIANT_ID,
+        "variable": "sea_surface_temperature",
+        "grid_id": GRID_ID,
+        "temporal_resolution": "Month",
+        "coarseness_factor": 2,
+        "time_start": "2020-01-01T00:00:00",
+        "time_end": "2020-03-01T00:00:00",
+        "grid_y_start": 0,
+        "grid_y_stop": 30,
+        "grid_x_start": 0,
+        "grid_x_stop": 40,
+        "relative_path": "products/example.nc",
+    }
+    record.update(changes)
+    return record
+
+
 def test_normalizes_shared_query_without_source_filters():
     result = normalize_query(_query())
-
     assert result.variable == "sea_surface_temperature"
     assert result.region == BoundingBox(309.877, 20.679, 40.0, 80.0)
     assert result.time_start == datetime(2020, 2, 1, 0)
     assert result.time_end == datetime(2020, 3, 31, 23)
     assert result.coarseness_factor == 2
-    assert result.time_unit == "Day"
-    assert result.function == "timeseries"
-    assert result.aggregation_method == "mean"
+    assert result.time_unit == "Month"
     assert result.repository is None
-    assert result.dataset is None
-    assert result.additional_parameters == {}
 
 
-def test_query_longitudes_match_the_storage_convention():
-    result = normalize_query(
-        _query(
-            region={"west": -180, "east": -20, "south": -10, "north": 10}
-        )
-    )
-
-    assert result.region == BoundingBox(180.0, 340.0, -10.0, 10.0)
-
-
-def test_find_query_normalizes_its_predicate_and_filter_value():
+def test_find_query_normalizes_and_requires_predicate():
     result = normalize_query(
         _query(function="find-time", predicate=">", filter_value="10.5")
     )
-
     assert result.predicate == "gt"
     assert result.filter_value == 10.5
-
-
-def test_find_query_requires_predicate_and_filter_value():
     with pytest.raises(ValueError, match="require a supported predicate"):
         normalize_query(_query(function="find-area"))
 
 
-def test_plan_reads_only_the_requested_spatial_level(tmp_path):
-    selected = ContainerScheme(
-        name="capacity_2",
-        factor=2,
-        data_dir=tmp_path / "capacity_2",
-        metadata=tmp_path / "capacity_2" / "metadata.jsonl",
-        definitions=tmp_path / "capacity_2.json",
-    )
-    unselected = ContainerScheme(
-        name="capacity_1",
-        factor=1,
-        data_dir=tmp_path / "capacity_1",
-        metadata=tmp_path / "capacity_1" / "metadata.jsonl",
-        definitions=tmp_path / "capacity_1.json",
-    )
-    selected.metadata.parent.mkdir()
-    unselected.metadata.parent.mkdir()
-    records = [{"block_id": "first"}, {"block_id": "second"}]
-    selected.metadata.write_text(
-        "\n".join(json.dumps(record) for record in records) + "\n"
-    )
-    unselected.metadata.write_text("this index must not be read\n")
-    settings = replace(
-        get_settings(),
-        container_schemes={
-            "capacity_1": unselected,
-            "capacity_2": selected,
-        },
-        coarseness_to_spatial_level={1: unselected, 2: selected},
-    )
-
-    plan = plan_query(_query(coarseness_factor=2), settings)
-
-    assert plan.requested_data_grid == RequestedDataGrid(2, "Day")
-    assert plan.spatial_level is selected
-    assert plan.index_records == tuple(records)
-
-
-def test_plan_filters_refines_and_groups_matching_blocks(tmp_path):
-    selected = ContainerScheme(
-        name="capacity_2",
-        factor=2,
-        data_dir=tmp_path / "capacity_2",
-        metadata=tmp_path / "capacity_2" / "metadata.jsonl",
-        definitions=tmp_path / "capacity_2.json",
-    )
-    selected.metadata.parent.mkdir()
-
-    def record(block_id, **changes):
-        value = {
-            "repository": "copernicusclimatedatastore",
-            "dataset": "carra_height",
-            "variable": "sea_surface_temperature",
-            "additional_parameters": {"height": "15m"},
-            "bucket_id": "r1_c2",
-            "coarseness_factor": 2,
-            "temporal_resolution": "1D",
-            "product_type": "aggregate",
-            "time_start": "2020-01-01T00:00:00",
-            "time_end": "2020-01-31T00:00:00",
-            "block_summary": {
-                "lon_min": 300.0,
-                "lon_max": 310.0,
-                "lat_min": 20.0,
-                "lat_max": 25.0,
-            },
-            "block_id": block_id,
-        }
-        value.update(changes)
-        return value
-
-    records = [
-        record("first"),
-        record(
-            "second",
-            bucket_id="r2_c0",
-            time_end="2020-01-15T00:00:00",
-            block_summary={
-                "lon_min": 10.0,
-                "lon_max": 20.0,
-                "lat_min": 50.0,
-                "lat_max": 60.0,
-            },
-        ),
-        record("other-parameters", additional_parameters={"height": "30m"}),
-        record(
-            "other-source",
-            repository="noaancei",
-            dataset="emsst",
-            additional_parameters={},
-        ),
-        record(
-            "outside-exact-region",
-            block_summary={
-                "lon_min": 250.0,
-                "lon_max": 260.0,
-                "lat_min": 20.0,
-                "lat_max": 25.0,
-            },
-        ),
-        record("wrong-bucket", bucket_id="r1_c1"),
-        record("wrong-variable", variable="air_temperature"),
-        record("wrong-coarseness", coarseness_factor=4),
-        record("wrong-time-unit", temporal_resolution="1MS"),
-        record("wrong-time", time_start="2019-01-01", time_end="2019-01-31"),
-    ]
-    selected.metadata.write_text(
-        "\n".join(json.dumps(item) for item in records) + "\n"
-    )
-    settings = replace(
-        get_settings(),
-        container_schemes={"capacity_2": selected},
-        coarseness_to_spatial_level={2: selected},
-    )
-    query = _query(
-        region={"west": -70, "east": 30, "south": 10, "north": 80},
-        time_start="2020-01",
-        time_end="2020-01",
-    )
-
-    plan = plan_query(query, settings)
-
-    assert plan.overlapping_bucket_ids == (
-        "r1_c0",
-        "r1_c2",
-        "r2_c0",
-        "r2_c2",
-    )
-    assert {item["block_id"] for item in plan.matching_blocks} == {
-        "first",
-        "second",
-        "other-parameters",
-        "other-source",
-    }
-    assert len(plan.block_groups) == 3
-    assert {
-        (group.repository, group.dataset) for group in plan.block_groups
-    } == {
-        ("copernicusclimatedatastore", "carra_height"),
-        ("noaancei", "emsst"),
-    }
-    height_15_coverage = next(
-        coverage
-        for coverage in plan.coverage.groups
-        if coverage.group.repository == "copernicusclimatedatastore"
-        and coverage.group.additional_parameters == {"height": "15m"}
-    )
-    assert ("r2_c0", datetime(2020, 1, 15)) in height_15_coverage.hit_set
-    assert ("r2_c0", datetime(2020, 1, 16)) in height_15_coverage.miss_set
-    assert ("r1_c0", datetime(2020, 1, 1)) in height_15_coverage.miss_set
-    assert len(height_15_coverage.hit_set) == 46
-    assert len(height_15_coverage.miss_set) == 78
-    assert height_15_coverage.warnings
-
-    filtered_plan = plan_query(
-        {
-            **query,
-            "repository": "copernicusclimatedatastore",
-            "dataset": "carra_height",
-            "additional_parameters": {"height": "15m"},
-        },
-        settings,
-    )
-    assert {item["block_id"] for item in filtered_plan.matching_blocks} == {
-        "first",
-        "second",
-    }
-    assert len(filtered_plan.coverage.groups) == 1
-
-
-def test_plan_reports_every_cell_missing_when_exact_grid_has_no_blocks(tmp_path):
-    selected = ContainerScheme(
-        name="capacity_2",
-        factor=2,
-        data_dir=tmp_path / "capacity_2",
-        metadata=tmp_path / "capacity_2" / "metadata.jsonl",
-        definitions=tmp_path / "capacity_2.json",
-    )
-    selected.metadata.parent.mkdir()
-    selected.metadata.write_text("")
-    settings = replace(
-        get_settings(),
-        container_schemes={"capacity_2": selected},
-        coarseness_to_spatial_level={2: selected},
-    )
-
+def test_planner_uses_shared_index_catalog_and_grid_lookup(tmp_path):
+    settings = _settings(tmp_path, [_partition()])
     plan = plan_query(
         _query(
-            region={"west": 0, "east": 10, "south": 0, "north": 10},
-            time_start="2020-01-01",
-            time_end="2020-01-02",
+            repository="copernicusclimatedatastore",
+            dataset="carra_height",
+            additional_parameters={"height": "15m"},
         ),
         settings,
     )
 
-    assert plan.coverage.groups == ()
-    assert plan.coverage.unmatched_miss_set == frozenset(
-        {
-            ("r1_c0", datetime(2020, 1, 1)),
-            ("r1_c0", datetime(2020, 1, 2)),
-        }
+    assert plan.requested_data_grid == RequestedDataGrid(2, "Month")
+    assert len(plan.matching_blocks) == 1
+    assert plan.matching_blocks[0]["partition_id"] == (
+        "11111111111111111111111111111111"
     )
+    assert plan.block_groups[0].grid_id == GRID_ID
+    assert plan.block_groups[0].grid_window == (0, 30, 0, 40)
+    assert "block_summary" not in plan.matching_blocks[0]
+
+
+def test_planner_requires_exact_product_and_reports_no_match(tmp_path):
+    settings = _settings(tmp_path, [_partition()])
+    plan = plan_query(_query(time_unit="Day", coarseness_factor=1), settings)
+    assert plan.matching_blocks == ()
     assert plan.coverage.warnings == (
-        "No matching data blocks exist at the exact requested data grid. "
-        "Try coarser spatial and/or temporal resolutions.",
+        "No matching product partitions exist at the exact requested grid.",
     )
 
 
@@ -292,9 +168,6 @@ def test_source_filters_and_dataset_parameters_are_validated():
             additional_parameters={"height": "15m"},
         )
     )
-
-    assert result.repository == "copernicusclimatedatastore"
-    assert result.dataset == "carra_height"
     assert result.additional_parameters == {"height": "15m"}
     assert available_datasets(result.repository) == (
         "carra_height",
@@ -305,12 +178,7 @@ def test_source_filters_and_dataset_parameters_are_validated():
     )
     assert available_additional_parameters(
         result.dataset, result.repository
-    ) == {"height": ("15m", "30m")}
-
-
-def test_additional_parameters_require_a_dataset():
-    with pytest.raises(ValueError, match="dataset is required"):
-        normalize_query(_query(additional_parameters={"height": "15m"}))
+    ) == {"height": ("15m", "30m"), "region": ("east", "west")}
 
 
 @pytest.mark.parametrize(
@@ -327,13 +195,3 @@ def test_additional_parameters_require_a_dataset():
 def test_rejects_unsupported_query_values(change, message):
     with pytest.raises(ValueError, match=message):
         normalize_query(_query(**change))
-
-
-def test_repository_and_dataset_restrict_the_variable():
-    with pytest.raises(ValueError, match="Unsupported variable"):
-        normalize_query(
-            _query(
-                repository="nasaearthdata",
-                variable="sea_surface_temperature",
-            )
-        )

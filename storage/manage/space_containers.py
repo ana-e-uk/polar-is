@@ -3,16 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import math
-from pathlib import Path
-import tempfile
 
 import numpy as np
 import xarray as xr
-
-from polaris.config import ContainerScheme, get_settings
-
 
 LON_SPAN = 360.0
 LAT_SPAN = 180.0
@@ -97,9 +91,9 @@ def container_grid(
     base_cols = LON_SPAN / lon_size
     base_rows = LAT_SPAN / lat_size
     if not math.isclose(base_cols, round(base_cols)):
-        raise ValueError("capacity_1 lon_size must divide 360 exactly")
+        raise ValueError("container_grid.lon_size must divide 360 exactly")
     if not math.isclose(base_rows, round(base_rows)):
-        raise ValueError("capacity_1 lat_size must divide 180 exactly")
+        raise ValueError("container_grid.lat_size must divide 180 exactly")
 
     grid = ContainerGrid(
         container=container,
@@ -114,22 +108,6 @@ def container_grid(
     if grid.n_rows * grid.n_cols - 1 > np.iinfo(np.int32).max:
         raise ValueError("Configured container grid has too many containers")
     return grid
-
-
-def grid_for_scheme(
-    scheme: ContainerScheme,
-    base_grid: dict | None = None,
-) -> ContainerGrid:
-    if base_grid is None:
-        base_grid = get_settings().container_grid
-    return container_grid(
-        scheme.name,
-        scheme.factor,
-        lon_min=base_grid["lon_min"],
-        lat_min=base_grid["lat_min"],
-        lon_size=base_grid["lon_size"],
-        lat_size=base_grid["lat_size"],
-    )
 
 
 def normalize_longitude(longitude, grid: ContainerGrid):
@@ -262,63 +240,3 @@ def container_definitions(grid: ContainerGrid) -> dict[str, dict]:
                 "data": 0,
             }
     return definitions
-
-
-def _write_json_atomically(path: Path, value: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        dir=path.parent,
-        prefix=f".{path.name}.",
-        suffix=".partial",
-    )
-    try:
-        with open(descriptor, "w", encoding="utf-8") as file:
-            json.dump(value, file, indent=2)
-            file.write("\n")
-        Path(temporary_name).replace(path)
-    except BaseException:
-        Path(temporary_name).unlink(missing_ok=True)
-        raise
-
-
-def ensure_container_scheme(
-    scheme: ContainerScheme,
-    base_grid: dict | None = None,
-) -> ContainerGrid:
-    """Create one scheme's directories/definitions or validate what exists."""
-    grid = grid_for_scheme(scheme, base_grid)
-    expected = container_definitions(grid)
-    scheme.data_dir.mkdir(parents=True, exist_ok=True)
-    if scheme.definitions.exists():
-        with scheme.definitions.open(encoding="utf-8") as file:
-            actual = json.load(file)
-        comparable_actual = {
-            key: {name: value for name, value in item.items() if name != "data"}
-            for key, item in actual.items()
-        }
-        comparable_expected = {
-            key: {name: value for name, value in item.items() if name != "data"}
-            for key, item in expected.items()
-        }
-        if comparable_actual != comparable_expected:
-            raise ValueError(
-                f"Existing definitions do not match {scheme.name}: "
-                f"{scheme.definitions}"
-            )
-    else:
-        _write_json_atomically(scheme.definitions, expected)
-    for container_id in expected:
-        (scheme.data_dir / container_id).mkdir(parents=True, exist_ok=True)
-    return grid
-
-
-def ensure_all_container_schemes() -> dict[str, ContainerGrid]:
-    settings = get_settings()
-    return {
-        name: ensure_container_scheme(scheme, settings.container_grid)
-        for name, scheme in settings.container_schemes.items()
-    }
-
-
-if __name__ == "__main__":
-    ensure_all_container_schemes()

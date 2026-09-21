@@ -145,58 +145,83 @@ def _display_bounds(west: float, east: float) -> tuple[float, float]:
 
 
 def _availability(settings: Settings) -> list[dict[str, Any]]:
-    """Summarize native-data envelopes without opening any NetCDF blocks."""
-    spatial_level = settings.coarseness_to_spatial_level.get(1)
-    if spatial_level is None or not spatial_level.metadata.is_file():
+    """Summarize dataset envelopes from the shared catalogs and index."""
+    if not settings.product_index.is_file() or not settings.datasets_catalog.is_file():
         return []
 
+    def read_jsonl(path):
+        return [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    datasets = {
+        record["dataset_variant_id"]: record
+        for record in read_jsonl(settings.datasets_catalog)
+    }
+    grid_bounds: dict[str, dict[str, float]] = {}
     grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-    with spatial_level.metadata.open() as metadata:
-        for line in metadata:
-            if not line.strip():
+    for record in read_jsonl(settings.product_index):
+        dataset = datasets.get(record["dataset_variant_id"])
+        if dataset is None:
+            continue
+        grid_id = record["grid_id"]
+        if grid_id not in grid_bounds:
+            grid_path = settings.grids_dir / f"{grid_id}.nc"
+            if not grid_path.is_file():
                 continue
-            record = json.loads(line)
-            if record.get("product_type") != "native":
-                continue
-            summary = record.get("block_summary") or {}
-            try:
-                bounds = {
-                    "west": float(summary["lon_min"]),
-                    "east": float(summary["lon_max"]),
-                    "south": float(summary["lat_min"]),
-                    "north": float(summary["lat_max"]),
+            import xarray as xr
+
+            with xr.open_dataset(grid_path) as grid:
+                latitude = grid["latitude"].values
+                longitude = grid["longitude"].values % 360
+                grid_bounds[grid_id] = {
+                    "west": float(longitude.min()),
+                    "east": float(longitude.max()),
+                    "south": float(latitude.min()),
+                    "north": float(latitude.max()),
                 }
-            except (KeyError, TypeError, ValueError):
-                continue
-            parameters = record.get("additional_parameters") or {}
-            key = (
-                record["repository"],
-                record["dataset"],
-                record["variable"],
-                json.dumps(parameters, sort_keys=True, separators=(",", ":")),
-            )
-            row = grouped.setdefault(
-                key,
-                {
-                    "repository": key[0],
-                    "dataset": key[1],
-                    "variable": key[2],
-                    "additional_parameters": parameters,
-                    "region": bounds,
-                    "time_start": record["time_start"],
-                    "time_end": record["time_end"],
-                    "spatial_resolutions": set(),
-                    "temporal_resolutions": set(),
-                },
-            )
-            row["region"]["west"] = min(row["region"]["west"], bounds["west"])
-            row["region"]["east"] = max(row["region"]["east"], bounds["east"])
-            row["region"]["south"] = min(row["region"]["south"], bounds["south"])
-            row["region"]["north"] = max(row["region"]["north"], bounds["north"])
-            row["time_start"] = min(row["time_start"], record["time_start"])
-            row["time_end"] = max(row["time_end"], record["time_end"])
-            row["spatial_resolutions"].add(record.get("native_spatial_resolution"))
-            row["temporal_resolutions"].add(record.get("native_temporal_resolution"))
+        bounds = grid_bounds[grid_id]
+        parameters = dataset.get("additional_parameters") or {}
+        variable_metadata = dataset.get("variables", {}).get(record["variable"], {})
+        source_resolution = variable_metadata.get("source_temporal_resolution")
+        definition = settings.name_docs.get(dataset["repository"], {}).get(
+            dataset["dataset"], {}
+        )
+        spatial_resolution = (definition.get("grid") or {}).get("resolution")
+        if isinstance(spatial_resolution, list) and len(spatial_resolution) == 1:
+            spatial_resolution = spatial_resolution[0]
+        key = (
+            dataset["repository"],
+            dataset["dataset"],
+            record["variable"],
+            json.dumps(parameters, sort_keys=True, separators=(",", ":")),
+        )
+        row = grouped.setdefault(
+            key,
+            {
+                "repository": key[0],
+                "dataset": key[1],
+                "variable": key[2],
+                "additional_parameters": parameters,
+                "region": dict(bounds),
+                "time_start": record["time_start"],
+                "time_end": record["time_end"],
+                "spatial_resolutions": set(),
+                "temporal_resolutions": set(),
+            },
+        )
+        row["region"]["west"] = min(row["region"]["west"], bounds["west"])
+        row["region"]["east"] = max(row["region"]["east"], bounds["east"])
+        row["region"]["south"] = min(row["region"]["south"], bounds["south"])
+        row["region"]["north"] = max(row["region"]["north"], bounds["north"])
+        row["time_start"] = min(row["time_start"], record["time_start"])
+        row["time_end"] = max(row["time_end"], record["time_end"])
+        if spatial_resolution is not None:
+            row["spatial_resolutions"].add(spatial_resolution)
+        if source_resolution is not None:
+            row["temporal_resolutions"].add(source_resolution)
 
     rows = []
     for row in grouped.values():
@@ -225,6 +250,33 @@ def _availability(settings: Settings) -> list[dict[str, Any]]:
 
 def _catalog(settings: Settings) -> dict[str, Any]:
     repository_titles = settings.frontend_titles.get("repository", {})
+    available_products: dict[tuple[str, str], set[tuple[str, str, int]]] = {}
+    if settings.datasets_catalog.is_file() and settings.product_index.is_file():
+        dataset_variants = {
+            record["dataset_variant_id"]: record
+            for record in (
+                json.loads(line)
+                for line in settings.datasets_catalog.read_text(
+                    encoding="utf-8"
+                ).splitlines()
+                if line.strip()
+            )
+        }
+        for line in settings.product_index.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            product = json.loads(line)
+            dataset = dataset_variants.get(product["dataset_variant_id"])
+            if dataset is None:
+                continue
+            key = (dataset["repository"], dataset["dataset"])
+            available_products.setdefault(key, set()).add(
+                (
+                    product["variable"],
+                    product["temporal_resolution"],
+                    int(product["coarseness_factor"]),
+                )
+            )
     repositories = []
     for repository_name, dataset_definitions in settings.name_docs.items():
         datasets = []
@@ -239,6 +291,18 @@ def _catalog(settings: Settings) -> dict[str, Any]:
                     ),
                     "temporal_sampling": definition.get("temporal_sampling", []),
                     "grid": definition.get("grid"),
+                    "available_products": [
+                        {
+                            "variable": variable,
+                            "time_unit": time_unit,
+                            "coarseness_factor": factor,
+                        }
+                        for variable, time_unit, factor in sorted(
+                            available_products.get(
+                                (repository_name, dataset_name), set()
+                            )
+                        )
+                    ],
                 }
             )
         repositories.append(
@@ -251,7 +315,7 @@ def _catalog(settings: Settings) -> dict[str, Any]:
     return {
         "repositories": repositories,
         "frontend_titles": settings.frontend_titles,
-        "coarseness_factors": sorted(settings.coarseness_to_spatial_level),
+        "coarseness_factors": sorted(settings.supported_coarseness_factors),
         "time_units": list(TIME_UNITS),
         "functions": list(settings.supported_query_functions),
         "aggregation_methods": list(settings.function_aggregation_methods),

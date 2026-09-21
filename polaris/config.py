@@ -8,15 +8,6 @@ CONFIG_FILE = PROJECT_ROOT / "config.yaml"
 
 
 @dataclass(frozen=True)
-class ContainerScheme:
-    name: str
-    factor: int
-    data_dir: Path
-    metadata: Path
-    definitions: Path
-
-
-@dataclass(frozen=True)
 class Settings:
     # directories
     _initialize: Path
@@ -28,12 +19,17 @@ class Settings:
     requests_: Path
     downloaded_data_: Path
     standardized_data_: Path
+    catalogs_dir: Path
+    datasets_catalog: Path
+    grids_catalog: Path
+    grids_dir: Path
+    bucket_lookup_dir: Path
+    products_dir: Path
+    product_index: Path
     combined_dataset: dict
-    # spatial container hierarchy
+    # shared geographic lookup grid
     container_grid: dict
-    container_schemes: dict[str, ContainerScheme]
-    coarseness_to_spatial_level: dict[int, ContainerScheme]
-    temporal_aggregation_resolutions: tuple[str, ...]
+    supported_coarseness_factors: tuple[int, ...]
     supported_query_functions: tuple[str, ...]
     function_aggregation_methods: tuple[str, ...]
     # dictionaries
@@ -46,23 +42,6 @@ def get_settings() -> Settings:
     with CONFIG_FILE.open() as file:
         raw = yaml.safe_load(file)
 
-    schemes = {
-        name: ContainerScheme(
-            name=name,
-            factor=int(values["factor"]),
-            data_dir=PROJECT_ROOT / values["data_dir"],
-            metadata=PROJECT_ROOT / values["metadata"],
-            definitions=PROJECT_ROOT / values["definitions"],
-        )
-        for name, values in raw["container_schemes"].items()
-    }
-    coarseness_to_spatial_level = {
-        int(coarseness): schemes[spatial_level]
-        for coarseness, spatial_level in raw[
-            "coarseness_to_spatial_level"
-        ].items()
-    }
-
     return Settings(
         _initialize=PROJECT_ROOT / raw["initialize_dir"],
         _downloaded=PROJECT_ROOT / raw["downloaded_data_dir"],
@@ -72,6 +51,13 @@ def get_settings() -> Settings:
         requests_=PROJECT_ROOT / raw["requests"],
         downloaded_data_=PROJECT_ROOT / raw["downloaded_data"],
         standardized_data_=PROJECT_ROOT / raw["standardized_data"],
+        catalogs_dir=PROJECT_ROOT / raw["catalogs_dir"],
+        datasets_catalog=PROJECT_ROOT / raw["datasets_catalog"],
+        grids_catalog=PROJECT_ROOT / raw["grids_catalog"],
+        grids_dir=PROJECT_ROOT / raw["grids_dir"],
+        bucket_lookup_dir=PROJECT_ROOT / raw["bucket_lookup_dir"],
+        products_dir=PROJECT_ROOT / raw["products_dir"],
+        product_index=PROJECT_ROOT / raw["product_index"],
         combined_dataset={
             **raw.get("combined_dataset", {}),
             "cache_dir": PROJECT_ROOT
@@ -80,10 +66,8 @@ def get_settings() -> Settings:
             ),
         },
         container_grid=raw["container_grid"],
-        container_schemes=schemes,
-        coarseness_to_spatial_level=coarseness_to_spatial_level,
-        temporal_aggregation_resolutions=tuple(
-            raw["temporal_aggregation_resolutions"]
+        supported_coarseness_factors=tuple(
+            int(value) for value in raw["supported_coarseness_factors"]
         ),
         supported_query_functions=tuple(raw["supported_query_functions"]),
         function_aggregation_methods=tuple(

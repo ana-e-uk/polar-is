@@ -14,10 +14,13 @@ from api.interface.app import (
     app,
     validate_access_configuration,
 )
-from polaris.config import ContainerScheme, get_settings
+from polaris.config import get_settings
 from polaris.services.job_service import job_service
-from storage.ingest_data.aggregate_data import add_aggregate_statistics
-from storage.ingest_data.make_data_blocks import block_path
+
+
+GRID_ID = "0123456789abcdef0123456789abcdef"
+VARIANT_ID = "fedcba9876543210fedcba9876543210"
+PARTITION_ID = "11111111111111111111111111111111"
 
 
 @pytest.fixture(autouse=True)
@@ -26,72 +29,112 @@ def _explicit_anonymous_access(monkeypatch):
 
 
 def _settings(tmp_path):
-    scheme = ContainerScheme(
-        name="capacity_1",
-        factor=1,
-        data_dir=tmp_path / "capacity_1",
-        metadata=tmp_path / "capacity_1" / "metadata.jsonl",
-        definitions=tmp_path / "capacity_1.json",
+    settings = replace(
+        get_settings(),
+        grids_dir=tmp_path / "catalogs" / "grids",
+        grids_catalog=tmp_path / "catalogs" / "grids.jsonl",
+        datasets_catalog=tmp_path / "catalogs" / "datasets.jsonl",
+        bucket_lookup_dir=tmp_path / "bucket_lookup",
+        products_dir=tmp_path / "products",
+        product_index=tmp_path / "metadata.jsonl",
+        _query_results=tmp_path / "results",
     )
-    data = xr.Dataset(
+    grid = xr.Dataset(
         {
-            "sea_surface_temperature": (
+            "cell_area": (("y", "x"), [[1.0]], {"units": "m2"}),
+        },
+        coords={
+            "latitude": ("y", [10.0]),
+            "longitude": ("x", [20.0]),
+        },
+        attrs={"grid_type": "rectilinear"},
+    )
+    settings.grids_dir.mkdir(parents=True)
+    grid.to_netcdf(settings.grids_dir / f"{GRID_ID}.nc")
+
+    def write_jsonl(path, records):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(json.dumps(item) + "\n" for item in records))
+
+    write_jsonl(
+        settings.grids_catalog,
+        [{
+            "grid_id": GRID_ID,
+            "grid_type": "rectilinear",
+            "shape_y": 1,
+            "shape_x": 1,
+            "relative_path": f"catalogs/grids/{GRID_ID}.nc",
+        }],
+    )
+    write_jsonl(
+        settings.datasets_catalog,
+        [{
+            "dataset_variant_id": VARIANT_ID,
+            "repository": "noaancei",
+            "dataset": "emsst",
+            "additional_parameters": {},
+            "variables": {"sea_surface_temperature": {
+                "units": "K", "source_temporal_resolution": "1D"
+            }},
+        }],
+    )
+    write_jsonl(
+        settings.bucket_lookup_dir / f"{GRID_ID}.jsonl",
+        [{
+            "grid_id": GRID_ID,
+            "bucket_id": "r3_c0",
+            "grid_y_start": 0,
+            "grid_y_stop": 1,
+            "grid_x_start": 0,
+            "grid_x_stop": 1,
+        }],
+    )
+    product = xr.Dataset(
+        {
+            "polaris_weighted_sum": (
                 ("timestamp", "y", "x"),
                 np.asarray([280.0, 282.0]).reshape(2, 1, 1),
                 {"units": "K"},
             ),
-            "cell_area": (("y", "x"), [[1.0]]),
+            "polaris_weight_sum": (
+                ("timestamp", "y", "x"), np.ones((2, 1, 1))
+            ),
+            "polaris_min": (
+                ("timestamp", "y", "x"),
+                np.asarray([280.0, 282.0]).reshape(2, 1, 1),
+                {"units": "K"},
+            ),
+            "polaris_max": (
+                ("timestamp", "y", "x"),
+                np.asarray([280.0, 282.0]).reshape(2, 1, 1),
+                {"units": "K"},
+            ),
         },
-        coords={
-            "timestamp": pd.date_range("2020-01-01", periods=2, freq="1D"),
-            "latitude": (("y", "x"), [[10.0]]),
-            "longitude": (("y", "x"), [[20.0]]),
-        },
+        coords={"timestamp": pd.date_range("2020-01-01", periods=2, freq="1D")},
     )
-    data["latitude_bounds"] = (("y", "bounds"), [[9.875, 10.125]])
-    data["longitude_bounds"] = (("x", "bounds"), [[19.875, 20.125]])
-    data = data.assign_coords(
-        source_y_index=("y", [40]),
-        source_x_index=("x", [80]),
-        source_y_start=("y", [40]),
-        source_y_stop=("y", [41]),
-        source_x_start=("x", [80]),
-        source_x_stop=("x", [81]),
-        grid_y_index=("y", [40]),
-        grid_x_index=("x", [80]),
+    relative_path = "products/web/day.nc"
+    product_path = tmp_path / relative_path
+    product_path.parent.mkdir(parents=True)
+    product.to_netcdf(product_path)
+    write_jsonl(
+        settings.product_index,
+        [{
+            "partition_id": PARTITION_ID,
+            "dataset_variant_id": VARIANT_ID,
+            "variable": "sea_surface_temperature",
+            "grid_id": GRID_ID,
+            "temporal_resolution": "Day",
+            "coarseness_factor": 1,
+            "time_start": "2020-01-01T00:00:00",
+            "time_end": "2020-01-02T00:00:00",
+            "grid_y_start": 0,
+            "grid_y_stop": 1,
+            "grid_x_start": 0,
+            "grid_x_stop": 1,
+            "relative_path": relative_path,
+        }],
     )
-    data = add_aggregate_statistics(data, "sea_surface_temperature")
-    path = block_path(scheme, "r3_c0", "web-test")
-    path.parent.mkdir(parents=True)
-    data.to_netcdf(path)
-    record = {
-        "repository": "noaancei",
-        "dataset": "emsst",
-        "variable": "sea_surface_temperature",
-        "additional_parameters": {},
-        "bucket_id": "r3_c0",
-        "block_id": "web-test",
-        "coarseness_factor": 1,
-        "temporal_resolution": "1D",
-        "native_temporal_resolution": "1D",
-        "native_spatial_resolution": 0.25,
-        "product_type": "native",
-        "time_start": "2020-01-01T00:00:00",
-        "time_end": "2020-01-02T00:00:00",
-        "block_summary": {
-            "lon_min": 20.0,
-            "lon_max": 20.0,
-            "lat_min": 10.0,
-            "lat_max": 10.0,
-        },
-    }
-    scheme.metadata.write_text(json.dumps(record) + "\n")
-    return replace(
-        get_settings(),
-        container_schemes={"capacity_1": scheme},
-        coarseness_to_spatial_level={1: scheme},
-        _query_results=tmp_path / "results",
-    )
+    return settings
 
 
 def _query():
@@ -118,7 +161,7 @@ def test_catalog_and_timeseries_query_boundary(tmp_path):
         client = TestClient(app)
         catalog = client.get("/api/catalog")
         assert catalog.status_code == 200
-        assert catalog.json()["coarseness_factors"] == [1]
+        assert catalog.json()["coarseness_factors"] == [1, 2]
         assert catalog.json()["frontend_titles"] == settings.frontend_titles
         noaa = next(
             repository
@@ -128,6 +171,14 @@ def test_catalog_and_timeseries_query_boundary(tmp_path):
         assert noaa["display_name"] == (
             "NOAA National Centers for Environmental Information"
         )
+        emsst = next(
+            dataset for dataset in noaa["datasets"] if dataset["name"] == "emsst"
+        )
+        assert emsst["available_products"] == [{
+            "variable": "sea_surface_temperature",
+            "time_unit": "Day",
+            "coarseness_factor": 1,
+        }]
         combined = next(
             dataset
             for repository in catalog.json()["repositories"]
@@ -223,20 +274,12 @@ def test_heatmap_query_returns_plot_ready_coordinates(tmp_path):
         data = result["groups"][0]["data"]
         assert data == {
             "kind": "heatmap",
-            "cell_ids": [result["groups"][0]["group_id"] + ":c1:40:80"],
-            "latitudes": [10.0],
-            "longitudes": [20.0],
-            "source_y_indices": [40],
-            "source_x_indices": [80],
-            "source_y_starts": [40],
-            "source_y_stops": [41],
-            "source_x_starts": [80],
-            "source_x_stops": [81],
-            "grid_y_indices": [40],
-            "grid_x_indices": [80],
-            "corner_latitudes": [[9.875, 9.875, 10.125, 10.125]],
-            "corner_longitudes": [[19.875, 20.125, 20.125, 19.875]],
-            "values": [281.0],
+            "grid_id": GRID_ID,
+            "grid_y_indices": [0],
+            "grid_x_indices": [0],
+            "latitudes": [[10.0]],
+            "longitudes": [[20.0]],
+            "values": [[281.0]],
         }
         completed = _wait_for_job(client, response.json()["job_id"])
         png = client.get(completed["groups"][0]["png_url"])

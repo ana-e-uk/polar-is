@@ -132,6 +132,7 @@ function projectedHeatmap(
       showscale: true,
       colorbar: { title: { text: group.units ?? "Value" }, thickness: 14 },
       zsmooth: false,
+      hoverongaps: false,
       name: sourceName(group, catalog),
       hovertemplate: `%{customdata[0]:.3f}°, %{customdata[1]:.3f}°<br>%{z} ${group.units ?? ""}<extra>${sourceName(group, catalog)}</extra>`,
       showlegend: false,
@@ -152,34 +153,11 @@ function rectilinearHeatmapTrace(
   if (data.kind !== "heatmap" && data.kind !== "find-area") {
     throw new Error("A rectilinear heatmap trace requires spatial data");
   }
-  const columns = new Map<number, number>();
-  const rows = new Map<number, number>();
-  data.grid_x_indices.forEach((gridIndex, index) => {
-    const longitude = data.longitudes[index];
-    if (longitude !== null) columns.set(gridIndex, longitude);
-  });
-  data.grid_y_indices.forEach((gridIndex, index) => {
-    const latitude = data.latitudes[index];
-    if (latitude !== null) rows.set(gridIndex, latitude);
-  });
-  const orderedColumns = [...columns.entries()].sort((left, right) => left[1] - right[1]);
-  const orderedRows = [...rows.entries()].sort((left, right) => left[1] - right[1]);
-  const columnPositions = new Map(orderedColumns.map(([index], position) => [index, position]));
-  const rowPositions = new Map(orderedRows.map(([index], position) => [index, position]));
-  const values: Array<Array<number | null>> = Array.from(
-    { length: orderedRows.length },
-    () => Array.from({ length: orderedColumns.length }, () => null),
-  );
-  data.values.forEach((value, index) => {
-    const row = rowPositions.get(data.grid_y_indices[index]);
-    const column = columnPositions.get(data.grid_x_indices[index]);
-    if (row !== undefined && column !== undefined) values[row][column] = value;
-  });
   return {
     type: "heatmap",
-    x: orderedColumns.map(([, longitude]) => longitude),
-    y: orderedRows.map(([, latitude]) => latitude),
-    z: values,
+    x: data.longitudes[0],
+    y: data.latitudes.map((row) => row[0]),
+    z: data.values,
     zmin: range.minimum,
     zmax: range.maximum === range.minimum ? range.minimum + 1 : range.maximum,
     autocolorscale: false,
@@ -189,6 +167,7 @@ function rectilinearHeatmapTrace(
     xgap: 0.35,
     ygap: 0.35,
     zsmooth: false,
+    hoverongaps: false,
     name: sourceName(group, catalog),
     hovertemplate: `%{y:.3f}°, %{x:.3f}°<br>%{z} ${group.units ?? ""}<extra>${sourceName(group, catalog)}</extra>`,
     showlegend: false,
@@ -201,28 +180,23 @@ function areaPlot(group: ResultGroup, catalog: Catalog, range: ValueRange): Area
   const data = group.data;
   if (data.kind !== "heatmap" && data.kind !== "find-area") return { traces: [], cells: [] };
   const projected = isProjectedGroup(group);
-  const cells: SpatialCell[] = data.values.flatMap((value, index) => {
-    const latitude = data.latitudes[index];
-    const longitude = data.longitudes[index];
-    const latitudes = data.corner_latitudes[index];
-    const longitudes = data.corner_longitudes[index];
-    if (value === null || latitude === null || longitude === null
-        || !latitudes || !longitudes || latitudes.length < 3 || longitudes.length < 3
-        || latitudes.some((item) => item === null)
-        || longitudes.some((item) => item === null)) return [];
+  const cells: SpatialCell[] = data.values.flatMap((row, y) => row.flatMap((value, x) => {
+    const latitude = data.latitudes[y]?.[x];
+    const longitude = data.longitudes[y]?.[x];
+    if (value === null || latitude == null || longitude == null) return [];
     return [{
       value,
-      matches: data.matches?.[index] ?? false,
-      latitudes: latitudes as number[],
-      longitudes: longitudes as number[],
+      matches: data.matches?.[y]?.[x] ?? false,
+      latitudes: [latitude],
+      longitudes: [longitude],
       latitude,
       longitude,
-      projectionX: data.projection_x?.[index] ?? null,
-      projectionY: data.projection_y?.[index] ?? null,
-      gridX: data.grid_x_indices[index],
-      gridY: data.grid_y_indices[index],
+      projectionX: data.projection_x?.[x] ?? null,
+      projectionY: data.projection_y?.[y] ?? null,
+      gridX: data.grid_x_indices[x],
+      gridY: data.grid_y_indices[y],
     }];
-  });
+  }));
   if (!cells.length) return { traces: [], cells: [] };
 
   const projectedGrid = projected ? projectedHeatmap(cells, group, catalog, range) : undefined;
@@ -246,15 +220,16 @@ function areaPlot(group: ResultGroup, catalog: Catalog, range: ValueRange): Area
       });
     } else {
       matches.forEach((cell) => {
-        vertical.push(...cell.latitudes, cell.latitudes[0], null);
-        horizontal.push(...cell.longitudes, cell.longitudes[0], null);
+        vertical.push(cell.latitude);
+        horizontal.push(cell.longitude);
       });
     }
     traces.push(coordinateTrace(false, horizontal, vertical, {
-      mode: "lines",
+      mode: projectedGrid ? "lines" : "markers",
       name: "Matches filter",
       hoverinfo: "skip",
       line: { color: "#dc2626", width: 2.5 },
+      marker: { color: "rgba(0,0,0,0)", line: { color: "#dc2626", width: 2 }, symbol: "square", size: 10 },
     } as Omit<Data, "type">));
   }
   return { traces, cells, projectedGrid };
@@ -267,6 +242,30 @@ function coastlineTrace(projected: boolean, coastlines: CoastlineCoordinates): D
     hoverinfo: "skip",
     showlegend: false,
   } as Omit<Data, "type">);
+}
+
+function clippedCoastlineTrace(
+  coastlines: CoastlineCoordinates,
+  xRange: [number, number],
+  yRange: [number, number],
+): Data {
+  const longitudes: Array<number | null> = [];
+  const latitudes: Array<number | null> = [];
+  const xPadding = (xRange[1] - xRange[0]) * 0.08;
+  const yPadding = (yRange[1] - yRange[0]) * 0.08;
+  coastlines.longitudes.forEach((longitude, index) => {
+    const latitude = coastlines.latitudes[index];
+    if (longitude === null || latitude === null
+        || longitude < xRange[0] - xPadding || longitude > xRange[1] + xPadding
+        || latitude < yRange[0] - yPadding || latitude > yRange[1] + yPadding) {
+      longitudes.push(null);
+      latitudes.push(null);
+      return;
+    }
+    longitudes.push(longitude);
+    latitudes.push(latitude);
+  });
+  return coastlineTrace(false, { longitudes, latitudes });
 }
 
 function lambertProject(group: ResultGroup, longitude: number, latitude: number): [number, number] | null {
@@ -464,8 +463,6 @@ function SpatialPlot({ group, catalog, range, snapshot, pinned, onPin, onUnpin }
     const element = plotRef.current;
     const data = group.data;
     if (data.kind !== "heatmap" && data.kind !== "find-area") return;
-    const longitudes = data.corner_longitudes.flat().filter((value): value is number => value !== null);
-    const latitudes = data.corner_latitudes.flat().filter((value): value is number => value !== null);
     const showPlotError = (error: unknown) => {
       if (disposed) return;
       console.error("Unable to render spatial plot", error);
@@ -484,7 +481,11 @@ function SpatialPlot({ group, catalog, range, snapshot, pinned, onPin, onUnpin }
       return;
     }
     const traces = plot.traces;
-    const hasMatches = data.kind === "find-area" && data.matches?.some(Boolean);
+    const longitudes = plot.cells.map((cell) => cell.longitude);
+    const latitudes = plot.cells.map((cell) => cell.latitude);
+    const longitudeRange = paddedRange(longitudes);
+    const latitudeRange = paddedRange(latitudes);
+    const hasMatches = data.kind === "find-area" && data.matches?.flat().some(Boolean);
     const layout: Partial<Layout> = {
       autosize: true,
       margin: { l: 58, r: 54, t: 8, b: hasMatches ? 76 : 54 },
@@ -507,7 +508,7 @@ function SpatialPlot({ group, catalog, range, snapshot, pinned, onPin, onUnpin }
         showline: true,
         mirror: true,
         ticks: "outside",
-        range: paddedRange(longitudes),
+        range: longitudeRange,
       },
       yaxis: projected && plot.projectedGrid ? {
         title: { text: "Latitude" },
@@ -525,7 +526,7 @@ function SpatialPlot({ group, catalog, range, snapshot, pinned, onPin, onUnpin }
         showline: true,
         mirror: true,
         ticks: "outside",
-        range: paddedRange(latitudes),
+        range: latitudeRange,
         scaleanchor: "x",
         scaleratio: 1,
       },
@@ -537,8 +538,8 @@ function SpatialPlot({ group, catalog, range, snapshot, pinned, onPin, onUnpin }
       plotly = Plotly;
       if (projected && plot.projectedGrid) {
         traces.splice(1, 0, ...projectedMapTraces(group, plot.cells, plot.projectedGrid, coastlines));
-      } else if (coastlines) {
-        traces.push(coastlineTrace(false, coastlines));
+      } else if (coastlines && longitudeRange && latitudeRange) {
+        traces.push(clippedCoastlineTrace(coastlines, longitudeRange, latitudeRange));
       }
       void Plotly.react(element, traces, layout, {
         responsive: true,
@@ -649,7 +650,7 @@ function valueRange(groups: ResultGroup[], group: ResultGroup): ValueRange {
     .flatMap((candidate) => {
       const data = candidate.data;
       if (data.kind !== "heatmap" && data.kind !== "find-area") return [];
-      return data.values.filter((value): value is number => value !== null);
+      return data.values.flat().filter((value): value is number => value !== null);
     });
   const extent = numericExtent(values);
   if (!extent) return { minimum: 0, maximum: 1 };
@@ -657,6 +658,7 @@ function valueRange(groups: ResultGroup[], group: ResultGroup): ValueRange {
 }
 
 function snapshotsForResult(result: QueryResult, query: QueryForm): PlotSnapshot[] {
+  if (!result.groups.length) return [];
   const areaGroups = result.groups.filter(isAreaGroup);
   if (areaGroups.length) {
     return areaGroups.map((group) => ({
@@ -680,7 +682,7 @@ export default function PlotPanel({ result, query, loading, catalog, pinnedPlots
   if (!plots.length && loading) return <section className="result-panel state-panel"><div className="spinner" /><h2>Reading Polar-is storage</h2><p>The query may take a moment for a large region or fine resolution.</p></section>;
   if (!plots.length && !result) return <section className="result-panel state-panel"><div className="empty-orbit" aria-hidden="true" /><h2>No result yet</h2><p>Select a region and data object, then run a query.</p></section>;
   if (!plots.length && result && !result.groups.length) return <section className="result-panel state-panel"><h2>No matching data</h2><p>Try another region, time interval, or resolution. Review the warnings below for details.</p></section>;
-  if (!plots.length && result?.function === "get-data") return <section className="result-panel state-panel"><h2>Data is ready</h2><p>The query returned {result.groups.reduce((sum, group) => sum + (group.data.kind === "get-data" ? group.data.cell_count : 0), 0).toLocaleString()} spatial cells. Use the download links below to save the NetCDF results.</p></section>;
+  if (!plots.length && result?.function === "get-data") return <section className="result-panel state-panel"><h2>Data is ready</h2><p>The query returned {result.groups.reduce((sum, group) => sum + (group.data.kind === "get-data" ? group.data.grid_shape[0] * group.data.grid_shape[1] : 0), 0).toLocaleString()} spatial cells. Use the download links below to save the NetCDF results.</p></section>;
 
   const sharedGroups = plots.flatMap((plot) => plot.result.groups.filter(isAreaGroup));
   return (

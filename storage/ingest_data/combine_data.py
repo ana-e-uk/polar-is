@@ -18,13 +18,16 @@ import numpy as np
 import xarray as xr
 
 from polaris.config import get_settings
-from storage.grid_topology import assign_native_grid_indices
+from storage.grid_topology import (
+    _axis_edges,
+    ensure_grid_catalog,
+    grid_cell_area,
+)
 from storage.ingest_data.aggregate_data import infer_native_temporal_resolution
 from storage.ingest_data.standardize import unique_output_path
 
 
 _EXPECTED_DAILY_SAMPLES = {"1H": 24, "3H": 8, "1D": 1}
-_EARTH_RADIUS_METRES = 6_371_008.8
 
 
 def daily_mean_with_coverage(
@@ -88,66 +91,6 @@ def combine_daily_arrays(
         "units": "1",
     }
     return combined, source_count
-
-
-def _axis_edges(data: xr.Dataset, coordinate: str) -> np.ndarray:
-    bounds_name = data[coordinate].attrs.get("bounds")
-    if bounds_name in data:
-        bounds = np.asarray(data[bounds_name].values, dtype=np.float64)
-        return np.concatenate((bounds[:, 0], bounds[-1:, 1]))
-    centers = np.asarray(data[coordinate].values, dtype=np.float64)
-    if centers.size == 1:
-        return np.asarray([centers[0] - 0.5, centers[0] + 0.5])
-    midpoints = (centers[:-1] + centers[1:]) / 2
-    return np.concatenate(
-        (
-            [centers[0] - (midpoints[0] - centers[0])],
-            midpoints,
-            [centers[-1] + (centers[-1] - midpoints[-1])],
-        )
-    )
-
-
-def _rectilinear_area(data: xr.Dataset) -> xr.DataArray:
-    latitude_edges = np.clip(_axis_edges(data, "latitude"), -90, 90)
-    longitude_edges = _axis_edges(data, "longitude")
-    latitude_factor = np.abs(
-        np.sin(np.deg2rad(latitude_edges[1:]))
-        - np.sin(np.deg2rad(latitude_edges[:-1]))
-    )
-    longitude_width = np.abs(np.deg2rad(np.diff(longitude_edges)))
-    area = (_EARTH_RADIUS_METRES**2) * latitude_factor[:, None] * longitude_width
-    return xr.DataArray(
-        area,
-        dims=("y", "x"),
-        attrs={"standard_name": "cell_area", "units": "m2"},
-    )
-
-
-def grid_cell_area(data: xr.Dataset) -> xr.DataArray:
-    """Calculate reusable cell areas for supported standardized grids."""
-    if data["latitude"].ndim == 1 and data["longitude"].ndim == 1:
-        return _rectilinear_area(data)
-    if "projection_x" in data.coords and "projection_y" in data.coords:
-        x_edges = _axis_edges(data, "projection_x")
-        y_edges = _axis_edges(data, "projection_y")
-        area = np.abs(np.diff(y_edges))[:, None] * np.abs(np.diff(x_edges))[None, :]
-        return xr.DataArray(
-            area,
-            dims=("y", "x"),
-            attrs={
-                "standard_name": "cell_area",
-                "long_name": "projected grid-cell area",
-                "units": "m2",
-            },
-        )
-    latitude, _ = xr.broadcast(data["latitude"], data["longitude"])
-    result = np.cos(np.deg2rad(latitude)).clip(min=0).transpose("y", "x")
-    result.attrs = {
-        "long_name": "relative grid-cell area",
-        "units": "relative",
-    }
-    return result
 
 
 def _projected_corners(data: xr.Dataset) -> tuple[np.ndarray, np.ndarray] | None:
@@ -271,10 +214,7 @@ def regrid_daily_to_target(
     target_grid = xesmf_grid(target)
     source_hash = _grid_hash(source_grid)
     target_hash = _grid_hash(target_grid)
-    grids_dir = cache_dir / "grids"
     weights_dir = cache_dir / "weights"
-    _write_netcdf_once(source_grid, grids_dir / f"{source_hash}.nc")
-    _write_netcdf_once(target_grid, grids_dir / f"{target_hash}.nc")
 
     operator_id = f"{source_hash}__to__{target_hash}__{method}"
     weights_path = weights_dir / f"{operator_id}.nc"
@@ -395,7 +335,7 @@ def _target_template(target: xr.Dataset) -> xr.Dataset:
     for name in ("latitude_bounds", "longitude_bounds"):
         if name in target:
             template[name] = target[name]
-    return assign_native_grid_indices(template)
+    return template
 
 
 def build_combined_records(
@@ -440,6 +380,7 @@ def build_combined_records(
         if target_data["latitude"].ndim != 1 or target_data["longitude"].ndim != 1:
             raise ValueError("The Combined target ERA5 grid must be rectilinear")
         target_template = _target_template(target_data)
+        ensure_grid_catalog(target_data, "rectilinear", settings=settings)
 
         by_variable: dict[str, list[list[dict[str, Any]]]] = {}
         for key, group in grouped.items():
@@ -454,6 +395,11 @@ def build_combined_records(
             attrs = None
             for group in source_groups:
                 source = _open_source_group(stack, group)
+                ensure_grid_catalog(
+                    source,
+                    group[0].get("grid_type"),
+                    settings=settings,
+                )
                 native_resolution = infer_native_temporal_resolution(
                     source["timestamp"], group[0]["temporal_resolution"]
                 )
