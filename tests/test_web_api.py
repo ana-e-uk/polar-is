@@ -236,6 +236,37 @@ def test_catalog_and_timeseries_query_boundary(tmp_path):
         job_service.clear()
 
 
+def test_source_product_api_estimate_uses_native_cadence(tmp_path):
+    settings = _settings(tmp_path)
+    records = [
+        json.loads(line)
+        for line in settings.product_index.read_text().splitlines()
+        if line.strip()
+    ]
+    records[0]["temporal_resolution"] = "Source"
+    settings.product_index.write_text(
+        "".join(json.dumps(record) + "\n" for record in records)
+    )
+    app.dependency_overrides[api_settings] = lambda: settings
+    job_service.clear()
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/jobs",
+            json={
+                "query": {**_query(), "time_unit": "Source"},
+                "outputs": ["plot-json", "netcdf"],
+            },
+        )
+        assert response.status_code == 202
+        result = _wait_for_job(client, response.json()["job_id"])
+        assert result["status"] == "completed"
+        assert len(result["result"]["groups"]) == 1
+    finally:
+        app.dependency_overrides.clear()
+        job_service.clear()
+
+
 def test_invalid_query_is_reported_as_validation_error(tmp_path):
     settings = _settings(tmp_path)
     app.dependency_overrides[api_settings] = lambda: settings

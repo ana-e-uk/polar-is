@@ -127,9 +127,13 @@ def _estimated_group_intervals(query, group) -> int:
         resolutions = tuple(
             sorted(
                 {
-                    str(record.get("temporal_resolution"))
+                    str(
+                        record.get("source_temporal_resolution")
+                        or record.get("temporal_resolution")
+                    )
                     for record in group.blocks
-                    if record.get("temporal_resolution")
+                    if record.get("source_temporal_resolution")
+                    or record.get("temporal_resolution")
                 }
             )
         )
