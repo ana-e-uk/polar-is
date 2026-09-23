@@ -1,8 +1,6 @@
 # Polar-is web interface
 
-The first interface slice uses FastAPI for HTTP requests and a Vite-built
-React/TypeScript application for the browser. FastAPI serves the production
-frontend from `frontend/dist` so the application has one origin.
+The current interface uses FastAPI for HTTP requests and a Vite-built React/TypeScript application for the browser. FastAPI serves the production frontend from `frontend/dist` so the application has one origin.
 
 ## Install
 
@@ -27,7 +25,7 @@ npm run build
 cd ../../..
 ```
 
-For anonymous conference access on the university host, start FastAPI from the
+For anonymous access on the university host, start FastAPI from the
 repository root:
 
 ```bash
@@ -51,24 +49,29 @@ nohup .venv/bin/uvicorn api.interface.app:app \
   > ../output.txt 2>&1 &
 ```
 
-`POLARIS_JOB_WORKERS=2` runs two queries concurrently inside the shared job
-queue. Keep Uvicorn at `--workers 1`: each Uvicorn process would otherwise have
-an independent in-memory queue and job registry. If the university HTTPS proxy
-runs on this same computer, prefer `--host 127.0.0.1`; otherwise use the address
-and firewall policy supplied by the administrator. The per-user setting is
-ignored in anonymous mode; lower it to the desired individual limit before
-switching to token mode.
+Notes:
+* `POLARIS_JOB_WORKERS` defines the number of queries that can run concurrently inside the shared job queue.
 
-The HTTPS reverse proxy can serve both clients from one origin:
+* Uvicorn `--workers < int >` sets the number of Uvicorn processes that have an independent in-memory queue and job registry. Current implementation only supports `--workers 1`.
+
+* If the HTTPS proxy runs on the same computer, prefer `--host 127.0.0.1`; otherwise use the address
+and firewall policy supplied by the administrator. 
+
+* The per-user limits settings are ignored in anonymous mode; lower it to the desired individual limit for token mode.
+
+* The HTTPS reverse proxy can serve both clients from one origin:
 
 ```text
 Browser: https://iharpv.cs.umn.edu/
 CLI:     https://iharpv.cs.umn.edu/api/v1/jobs
 ```
 
-The university reverse proxy should apply IP-based rate limiting and forward
-the public HTTPS origin to port 8001. Polar-is itself enforces the shared job
-capacity and returns HTTP 429 with `Retry-After` when it is busy.
+* The official reverse proxy should apply IP-based rate limiting and forward the public HTTPS origin to port 8001. 
+
+* PolarIS enforces the shared job capacity and returns HTTP 429 with `Retry-After` when it is busy.
+
+
+## Local development
 
 For local development, run:
 
@@ -79,37 +82,12 @@ POLARIS_ACCESS_MODE=anonymous .venv/bin/uvicorn api.interface.app:app --reload
 Then open <http://127.0.0.1:8000>. The interactive API documentation is at
 <http://127.0.0.1:8000/docs>.
 
-The prototype asynchronous queue lives inside this process. Run one Uvicorn
-worker; multiple independent workers would have separate in-memory queues.
+The asynchronous queue lives inside this process. Run one Uvicorn worker; multiple independent workers would have separate in-memory queues.
 
-## Prototype job API and access modes
+## Job API
 
 Both the web interface and CLI submit jobs to `POST /api/v1/jobs`, then poll
-`GET /api/v1/jobs/{job_id}`. Query metadata is kept in memory and generated
-artifacts expire after ten minutes by default.
-
-Set the access mode explicitly. Conference mode accepts browser and CLI jobs
-without credentials:
-
-```bash
-export POLARIS_ACCESS_MODE=anonymous
-```
-
-Polar-is refuses to start if `POLARIS_ACCESS_MODE` is missing or unsupported,
-so omitting a token configuration cannot accidentally select public access.
-
-In anonymous mode, the global active-job limit is enforced and the per-owner
-limit is skipped because all participants share an anonymous identity. After
-the conference, token mode can be enabled with a token-to-owner mapping:
-
-```bash
-export POLARIS_ACCESS_MODE=token
-export POLARIS_API_TOKENS='{"replace-with-a-random-token":"researcher-name"}'
-```
-
-The server refuses to start in token mode when the token mapping is absent,
-empty, or invalid. This is an auditable prototype boundary, not a self-service
-identity system.
+`GET /api/v1/jobs/{job_id}`. Query metadata is kept in memory and generated artifacts expire after ten minutes by default.
 
 Optional tuning variables are:
 
@@ -131,6 +109,36 @@ its spatial cells, time intervals, matching blocks, result values, and source
 groups. Requests over a configured limit are rejected without opening the
 matching NetCDF blocks. Repository and dataset filters remain optional, so one
 bounded request may still return several matching datasets.
+
+`GET /api/v1/status` is public and reports the access mode, running jobs,
+queued jobs, and shared queue capacity.
+
+## Access modes
+
+**Anonymous mode**
+
+Set the access mode explicitly. Anonymous mode accepts browser and CLI jobs without credentials:
+
+```bash
+export POLARIS_ACCESS_MODE=anonymous
+```
+
+PolarIS refuses to start if `POLARIS_ACCESS_MODE` is missing or unsupported, so omitting a token configuration cannot accidentally select public access.
+
+In anonymous mode, the global active-job limit is enforced and the per-owner limit is skipped because all participants share an anonymous identity.
+
+**Token mode**
+
+Token mode can be enabled with a token-to-owner mapping:
+
+```bash
+export POLARIS_ACCESS_MODE=token
+export POLARIS_API_TOKENS='{"replace-with-a-random-token":"researcher-name"}'
+```
+
+The server refuses to start in token mode when the token mapping is absent,
+empty, or invalid. This is an auditable prototype boundary, not a self-service
+identity system.
 
 ## Expired-output cleanup
 
@@ -156,9 +164,6 @@ deleting anything with:
 ```bash
 .venv/bin/python -m polaris.services.cleanup --dry-run
 ```
-
-`GET /api/v1/status` is public and reports the access mode, running jobs,
-queued jobs, and shared queue capacity.
 
 ## Develop the frontend
 

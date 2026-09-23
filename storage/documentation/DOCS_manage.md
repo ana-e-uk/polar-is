@@ -1,7 +1,6 @@
 # Managing Polar-is storage
 
-The canonical geographic bucket grid in `config.yaml` is a lookup aid, not a
-physical storage hierarchy. Each canonical data grid has one JSONL lookup mapping
+The canonical geographic bucket grid in `config.yaml` is a lookup aid, not a physical storage hierarchy. Each canonical data grid has one JSONL lookup mapping
 bucket IDs to one or more rectangular grid windows.
 
 Physical storage consists of:
