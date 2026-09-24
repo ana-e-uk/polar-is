@@ -13,7 +13,7 @@ const initialForm: QueryForm = {
   variable: "",
   time_start: "2018-01-01",
   time_end: "2018-01-31",
-  region: { west: -20, east: 90, south: 55, north: 90 },
+  region: { west: -10, east: 10, south: 55, north: 70 },
   coarseness_factor: 4,
   time_unit: "Day",
   function: "timeseries",
