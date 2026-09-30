@@ -8,7 +8,7 @@ import json
 import os
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -332,7 +332,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "X-Polaris-Client"],
 )
 
 _bearer = HTTPBearer(auto_error=False)
@@ -374,6 +374,7 @@ def create_job(
     request: JobRequest,
     identity: ApiIdentity = Depends(api_identity),
     settings: Settings = Depends(api_settings),
+    x_polaris_client: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """Validate and enqueue one prototype query job."""
     try:
@@ -383,6 +384,7 @@ def create_job(
             identity.owner,
             settings,
             enforce_owner_limit=identity.enforce_owner_limit,
+            client=x_polaris_client or "api",
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

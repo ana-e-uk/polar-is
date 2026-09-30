@@ -19,6 +19,7 @@ class Settings:
     requests_: Path
     downloaded_data_: Path
     standardized_data_: Path
+    query_log: Path
     catalogs_dir: Path
     datasets_catalog: Path
     grids_catalog: Path
@@ -51,6 +52,7 @@ def get_settings() -> Settings:
         requests_=PROJECT_ROOT / raw["requests"],
         downloaded_data_=PROJECT_ROOT / raw["downloaded_data"],
         standardized_data_=PROJECT_ROOT / raw["standardized_data"],
+        query_log=PROJECT_ROOT / raw["query_log"],
         catalogs_dir=PROJECT_ROOT / raw["catalogs_dir"],
         datasets_catalog=PROJECT_ROOT / raw["datasets_catalog"],
         grids_catalog=PROJECT_ROOT / raw["grids_catalog"],

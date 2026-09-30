@@ -19,6 +19,7 @@ from polaris.services.query_service import (
     execute_job,
     validate_job_request,
 )
+from polaris.services.query_log import append_query_log, normalize_query_client
 
 
 TERMINAL_STATES = frozenset({"completed", "failed", "cancelled", "expired"})
@@ -100,6 +101,7 @@ class JobService:
         settings: Settings,
         *,
         enforce_owner_limit: bool = True,
+        client: str = "api",
     ) -> Job:
         requested = validate_job_request(query, outputs, settings)
         self.cleanup_expired()
@@ -120,6 +122,15 @@ class JobService:
                         "wait for a job to finish and try again"
                     )
             job = Job(uuid4().hex, owner, dict(query), requested)
+            append_query_log(
+                settings.query_log,
+                job_id=job.job_id,
+                client=normalize_query_client(client),
+                owner=owner,
+                outputs=requested,
+                query=job.query,
+                submitted_at=job.created_at,
+            )
             self._jobs[job.job_id] = job
             job.future = self._executor.submit(self._run, job.job_id, settings)
             return job

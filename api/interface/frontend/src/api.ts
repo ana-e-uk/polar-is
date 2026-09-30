@@ -43,7 +43,10 @@ export async function runQuery(
   const created = await responseJson<QueryJob>(
     await fetch("/api/v1/jobs", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Polaris-Client": "interface",
+      },
       body: JSON.stringify({ query: payload, outputs: ["plot-json", "netcdf"] }),
     }),
   );

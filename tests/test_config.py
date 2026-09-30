@@ -5,6 +5,11 @@ def test_supported_coarseness_factors_are_reduced():
     assert get_settings().supported_coarseness_factors == (1, 2)
 
 
+def test_query_log_is_shared_storage_data():
+    assert get_settings().query_log.name == "query_log.jsonl"
+    assert get_settings().query_log.parent.name == "data"
+
+
 def test_combined_dataset_uses_daily_era5_grid_configuration():
     combined = get_settings().combined_dataset
 

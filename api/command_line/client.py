@@ -28,7 +28,10 @@ class PolarIsClient:
         self.timeout = timeout
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Accept": "application/json"}
+        headers = {
+            "Accept": "application/json",
+            "X-Polaris-Client": "cli",
+        }
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers

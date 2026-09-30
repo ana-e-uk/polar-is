@@ -38,6 +38,7 @@ def _settings(tmp_path):
         products_dir=tmp_path / "products",
         product_index=tmp_path / "metadata.jsonl",
         _query_results=tmp_path / "results",
+        query_log=tmp_path / "query_log.jsonl",
     )
     grid = xr.Dataset(
         {
@@ -231,6 +232,9 @@ def test_catalog_and_timeseries_query_boundary(tmp_path):
         assert download.status_code == 200
         assert download.headers["content-type"] == "application/x-netcdf"
         assert download.content
+        log_record = json.loads(settings.query_log.read_text())
+        assert log_record["job_id"] == response.json()["job_id"]
+        assert log_record["client"] == "api"
     finally:
         app.dependency_overrides.clear()
         job_service.clear()
@@ -365,6 +369,7 @@ def test_async_job_returns_plot_json_and_netcdf(tmp_path):
         client = TestClient(app)
         created = client.post(
             "/api/v1/jobs",
+            headers={"X-Polaris-Client": "interface"},
             json={"query": _query(), "outputs": ["plot-json", "png", "netcdf"]},
         )
         assert created.status_code == 202
@@ -380,6 +385,19 @@ def test_async_job_returns_plot_json_and_netcdf(tmp_path):
         data = client.get(group["data_url"])
         assert data.status_code == 200
         assert data.headers["content-type"] == "application/x-netcdf"
+        log_records = [
+            json.loads(line) for line in settings.query_log.read_text().splitlines()
+        ]
+        assert len(log_records) == 1
+        assert log_records[0]["job_id"] == created.json()["job_id"]
+        assert log_records[0]["client"] == "interface"
+        assert log_records[0]["owner"] == "anonymous"
+        assert log_records[0]["outputs"] == ["plot-json", "png", "netcdf"]
+        assert log_records[0]["query"] == {
+            **_query(),
+            "predicate": None,
+            "filter_value": None,
+        }
     finally:
         app.dependency_overrides.clear()
         job_service.clear()
@@ -488,6 +506,7 @@ def test_preflight_rejects_oversized_query_before_enqueue(
         assert "Estimated spatial cells" in response.json()["detail"]
         assert job_service.status()["running_jobs"] == 0
         assert job_service.status()["queued_jobs"] == 0
+        assert not settings.query_log.exists()
     finally:
         app.dependency_overrides.clear()
         job_service.clear()
@@ -507,6 +526,7 @@ def test_full_global_queue_returns_friendly_response(tmp_path, monkeypatch):
         assert response.status_code == 429
         assert response.json()["detail"] == "Polar-is is busy; try again shortly"
         assert response.headers["retry-after"] == "5"
+        assert not settings.query_log.exists()
     finally:
         job_service.max_active_jobs = previous_capacity
         app.dependency_overrides.clear()

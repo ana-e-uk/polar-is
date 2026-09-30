@@ -89,6 +89,13 @@ The asynchronous queue lives inside this process. Run one Uvicorn worker; multip
 Both the web interface and CLI submit jobs to `POST /api/v1/jobs`, then poll
 `GET /api/v1/jobs/{job_id}`. Query metadata is kept in memory and generated artifacts expire after ten minutes by default.
 
+Every accepted query is also appended to `storage/data/query_log.jsonl`. Each
+JSON Lines record contains the job ID, UTC submission time, client origin,
+owner label, requested outputs, and validated query. Rejected requests, access
+tokens, polling requests, and output downloads are not logged. The file is not
+removed by result cleanup and should be included in the server's normal backup
+and log-rotation policy.
+
 Optional tuning variables are:
 
 ```text
