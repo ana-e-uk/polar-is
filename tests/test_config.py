@@ -31,3 +31,36 @@ def test_frontend_titles_are_loaded_from_configuration():
     )
     assert titles["resolution"]["0.25"]["coarsen-2"] == [0.5]
     assert "coarsen-4" not in titles["resolution"]["0.25"]
+
+
+def test_era5_ingest_variables_have_expected_aggregation_methods():
+    settings = get_settings()
+    variables = settings.name_docs["copernicusclimatedatastore"][
+        "era5_single_level"
+    ]["variables"]
+
+    mean_variables = {
+        "2m_temperature",
+        "ice_temperature_layer_1",
+        "ice_temperature_layer_2",
+        "ice_temperature_layer_3",
+        "ice_temperature_layer_4",
+        "snow_depth",
+        "surface_pressure",
+        "temperature_of_snow_layer",
+    }
+    sum_variables = {
+        "snowfall",
+        "snowmelt",
+        "total_precipitation",
+    }
+
+    for variable in mean_variables | sum_variables:
+        assert variables[variable] == variable
+        assert settings.aggregation_methods[variable]["spatial"] == "mean"
+
+    for variable in mean_variables:
+        assert settings.aggregation_methods[variable]["temporal"] == "mean"
+
+    for variable in sum_variables:
+        assert settings.aggregation_methods[variable]["temporal"] == "sum"

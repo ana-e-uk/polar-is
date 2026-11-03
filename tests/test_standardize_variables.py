@@ -27,6 +27,20 @@ def test_standardizes_configured_variable_name():
     assert "sst" not in standardized.variables
 
 
+def test_standardizes_configured_era5_identity_variable():
+    dataset = xr.Dataset({"snowfall": ("x", [1.0, 2.0])})
+    record = {
+        "repository": "copernicusclimatedatastore",
+        "dataset": "era5_single_level",
+        "variable": "snowfall",
+    }
+
+    standardized, variable_name = get_standard_var_name(dataset, record)
+
+    assert standardized.identical(dataset)
+    assert variable_name == "snowfall"
+
+
 def test_standard_variable_name_can_already_match():
     dataset = xr.Dataset(
         {"sea_surface_temperature": ("x", [1.0, 2.0])}
