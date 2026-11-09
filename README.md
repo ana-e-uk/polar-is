@@ -146,3 +146,86 @@ PolarIS is equipt to request data from multiple remote repositories and datasets
 
 * `storage/documentation/DOCS_query.md` describes how queries are handled.
 
+
+---
+
+## Server Requirements
+
+### Deployment target
+
+- Operating system:
+- Hostname and public URL:
+- Deployment user:
+- PolarIS Git branch and commit:
+- ERA5 source-data location:
+- CARRA source-data location:
+- PolarIS product-data location:
+
+### Required software
+
+- Python 3.12 or newer
+- Node.js 20.19+ or 22.12+
+- npm
+- Git
+- Python dependencies from `pyproject.toml`
+- ESMPy/ESMF for xESMF regridding
+- Reverse proxy such as Nginx or Apache
+- systemd or another service manager
+- TLS certificate for HTTPS
+
+### Hardware
+
+- CPU: 4 cores minimum; record actual allocation
+- RAM: 16 GB minimum; 32–64 GB recommended for ingestion
+- Storage: raw data + generated hierarchy + temporary workspace + backups
+- Free-space reserve: at least 20–30%
+
+Final storage capacity must be calculated from the actual ERA5 and CARRA
+archives and an ingestion trial. Do not size it from source files alone.
+
+### Network
+
+- External HTTPS on port 443
+- FastAPI bound internally to 127.0.0.1:8001
+- Outbound HTTPS for remote data providers
+- DNS entry for the public URL
+- Firewall allowing only the reverse proxy to reach FastAPI
+
+### Credentials and security
+
+- Copernicus/CDS credentials, if remote downloads are enabled
+- `POLARIS_ACCESS_MODE`
+- API tokens when token mode is used
+- Credentials stored outside Git
+- Writable data directories restricted to the service account
+
+### Runtime configuration
+
+- `POLARIS_JOB_WORKERS`
+- `POLARIS_MAX_ACTIVE_JOBS`
+- `POLARIS_MAX_QUEUED_PER_USER`
+- `POLARIS_RESULT_TTL_SECONDS`
+- Query-size limit variables
+- Source, product, catalog, temporary, and log paths
+
+Use one Uvicorn worker because the current job queue is in memory.
+
+### Operations
+
+- systemd service for FastAPI
+- Scheduled expired-result cleanup
+- Log rotation
+- Storage monitoring
+- Backup policy for catalogs and configuration
+- Restart and recovery procedure
+
+### Verification
+
+- Python test result:
+- Frontend typecheck result:
+- Frontend build result:
+- API status/catalog check:
+- ERA5 test query:
+- CARRA test query:
+- Browser test:
+- CLI test:
