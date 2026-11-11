@@ -9,8 +9,6 @@ A user must give a list of the data of interest that specifies the data they are
 * Spatial container intervals are half-open on their larger side, except the
   global latitude maximum, and are defined by latitude/longitude intervals.
 
-* Capacity-1 container size is defined in **config.yaml**
-
 * The dateline we use is UTC.
 
 * Latitude-Longitude convention: convert all longitude values into the range $[0, 360)$. Some datasets may have longitude values in the range $(-180,180)$ or $(0, 360)$, with different combinations of open and closed boundaries. 

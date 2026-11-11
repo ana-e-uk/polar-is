@@ -3,13 +3,13 @@
 The Polar-is CLI is a small interactive client for a remote Polar-is server. It
 keeps named data objects in memory, submits asynchronous query jobs, and
 downloads static PNG plots or NetCDF data files. Data objects disappear when
-the CLI exits.
+the CLI exits locally.
 
 The CLI does not need a local copy of the managed environmental data.
 
 ## Download and install
 
-The research prototype currently installs from the project repository and
+The current version installs from the project repository and
 requires Python 3.12 or newer:
 
 ```bash
@@ -24,13 +24,13 @@ entry point when the project is later published to a Python package index.
 
 ## Connect to a server
 
-The CLI defaults to the university server. You can also pass it explicitly:
+The CLI defaults to the server specified in [`DEFAULT_SERVER_URL`](https://github.com/ana-e-uk/polar-is/blob/aa296ea1b2b326df8032c3a2fb2000e095b23725/api/command_line/cli.py#L21) in file **cli.py**. You can also pass it explicitly:
 
 ```bash
 .venv/bin/polar-is --server https://iharpv.cs.umn.edu
 ```
 
-The website and CLI use the same server. The browser loads `/`, while the CLI
+The website interface and CLI use the same server. The browser loads `/`, while the CLI
 sends asynchronous jobs to `/api/v1/jobs`; a separate CLI server is not needed.
 
 Use `--output` to choose the initial download directory:
@@ -42,13 +42,13 @@ Use `--output` to choose the initial download directory:
 ```
 
 For local development, pass `--server http://127.0.0.1:8000`.
-`POLARIS_API_URL` can also replace the default university URL.
+`POLARIS_API_URL` can also replace the default URL.
 
-## Anonymous conference access
+## Anonymous access
 
-When the server administrator sets `POLARIS_ACCESS_MODE=anonymous`, start the
-CLI and begin querying. The university URL is the default, so no account,
-login command, token, or server argument is required:
+If the server administrator sets `POLARIS_ACCESS_MODE=anonymous`, anyone can
+start the CLI and begin querying. No account, login command, token, or server 
+argument is required:
 
 ```bash
 .venv/bin/polar-is
@@ -59,10 +59,10 @@ queue is. When a submitted job is queued, the CLI reports how many running or
 earlier queued jobs are ahead of it. If the shared queue is full, it reports
 that Polar-is is busy and asks the user to try again shortly.
 
-## Token access after the conference
+## Token access
 
-If the administrator changes the server to `POLARIS_ACCESS_MODE=token`, enter
-`login` and paste an issued access token at the hidden prompt:
+If the administrator changes the server to `POLARIS_ACCESS_MODE=token`, users
+must enter a `login` and paste an issued access token at the hidden prompt:
 
 ```text
 Polar-is $ login
@@ -125,11 +125,11 @@ Polar-is $ plot sst find-area le 275
 ```
 
 The CLI submits a job, reports its state, and downloads one PNG for each
-returned source group. Multiple files are expected when a query matches
+returned dataset result. Multiple files are expected when a query matches
 multiple datasets or parameter combinations.
 
-PNG generation requires the Polar-is server—not the CLI computer—to install
-the optional plotting dependencies.
+PNG generation requires the Polar-is server (administrator)—not the CLI computer 
+(user)—to install the optional plotting dependencies.
 
 ## Download data
 
@@ -139,7 +139,7 @@ Use `download` to run the data object's `get-data` query and retrieve NetCDF:
 Polar-is $ download sst
 ```
 
-One NetCDF file is downloaded per returned source group.
+One NetCDF file is downloaded per returned dataset.
 
 ## Output files
 
@@ -170,14 +170,12 @@ quit             Exit and discard session data objects
 help             Show command help
 ```
 
-## Prototype limitations
+## Limitations
 
 - The server queue is in memory, so jobs may be lost when the server restarts.
-- The CLI is interactive; non-interactive one-shot commands are not yet
-  implemented.
-- The public conference mode is anonymous. IP-based rate limiting is supplied
-  by the university HTTPS reverse proxy, while Polar-is bounds query cost and
-  the shared queue.
+- The CLI is interactive; non-interactive one-shot commands are not implemented.
+- Anonymous mode uses IP-based rate limits supplied by the current HTTPS 
+  reverse proxy, while Polar-is bounds query cost and the shared queue.
 - Token mode is a configurable bearer-token prototype pending integration with
   a university-approved identity provider.
 - Generated results expire on the server. Files already downloaded by the CLI
@@ -190,11 +188,11 @@ help             Show command help
   administrator.
 
 `429 Polar-is is busy; try again shortly`
-: The conference-wide queue is full. Wait briefly and submit the job again.
+: The queue is full. Wait briefly and submit the job again.
 
 `422` response
-: The server rejected a field or the query exceeded a configured prototype
-  limit. Check `catalog`, coordinate order, time unit, and coarseness.
+: The server rejected a field or the query exceeded a configured limit. 
+  Check `catalog`, coordinate order, time unit, and coarseness.
 
 `Job failed: PNG output requires the optional plotting dependencies`
 : The server administrator must install `.[plot]` and restart the server.

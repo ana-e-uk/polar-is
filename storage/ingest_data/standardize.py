@@ -22,6 +22,7 @@ Consolidated files with standardized units, coordinates, dimension names
 CSV with same columns as IN
 """
 import pandas as pd
+import numpy as np
 import xarray as xr
 import json
 import datetime
@@ -371,6 +372,32 @@ def get_standard_var_name(
 
     return ds, standard_var_name
 
+
+def remove_singleton_source_coordinates(ds: xr.Dataset) -> xr.Dataset:
+    """Move technical singleton coordinates to provenance attributes."""
+    result = ds
+    retained = {
+        "timestamp",
+        "latitude",
+        "longitude",
+        "projection_y",
+        "projection_x",
+        "crs",
+    }
+    for name in tuple(result.coords):
+        coordinate = result[name]
+        if name in retained or coordinate.size != 1:
+            continue
+        value = coordinate.values.reshape(-1)[0]
+        if isinstance(value, np.generic):
+            value = value.item()
+        result.attrs[f"polaris_source_coordinate_{name}"] = value
+        if coordinate.dims and all(result.sizes[dim] == 1 for dim in coordinate.dims):
+            result = result.squeeze(coordinate.dims, drop=True)
+        elif name in result.coords:
+            result = result.drop_vars(name)
+    return result
+
 def read_metadata(path: Path) -> list[dict[str, Any]]:
     """Read all metadata records."""
 
@@ -416,13 +443,13 @@ def standardize(records, tmp_dir, metadata_output) -> None:
                 record=record,
             )
 
-            # Assign global source indices only after rectilinear sorting, but
-            # before any spatial block is cut from the native grid.
+            # Attach reusable grid geometry after rectilinear sorting.
             data, grid_info["grid_type"] = add_grid_topology(
                 data,
                 standard_var_name,
                 grid_info["grid_type"],
             )
+            data = remove_singleton_source_coordinates(data)
 
             # Save info of new file
             output_path = unique_output_path(directory=tmp_dir, unique_type="time")
@@ -454,3 +481,4 @@ if __name__ == "__main__":
     metadata_output = settings.standardized_data_
 
     standardize(records, tmp_dir, metadata_output)
+    data_to_add.write_text("", encoding="utf-8")

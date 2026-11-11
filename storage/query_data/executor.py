@@ -1,10 +1,10 @@
-"""Execute a planned query and write one result for each block group."""
+"""Execute planned queries from time-partitioned products."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime
-import hashlib
+from functools import lru_cache
 import json
 import operator
 from pathlib import Path
@@ -14,15 +14,11 @@ import numpy as np
 import xarray as xr
 
 from polaris.config import Settings, get_settings
+from storage.catalog import stable_128_bit_id
 from storage.ingest_data.aggregate_data import (
     AGGREGATE_STATISTICS,
     add_aggregate_statistics,
 )
-from storage.ingest_data.make_data_blocks import (
-    block_path,
-    spatially_crop_block,
-)
-from storage.grid_topology import transformer_from_grid_mapping
 from storage.query_data.query_data import (
     BlockGroupCoverage,
     BoundingBox,
@@ -41,7 +37,7 @@ class SourceInfo:
     additional_parameters: dict[str, Any]
     native_temporal_resolutions: tuple[str, ...]
     native_spatial_resolutions: tuple[Any, ...]
-    block_ids: tuple[str, ...]
+    partition_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -51,6 +47,8 @@ class GroupResult:
     file_path: Path
     source: SourceInfo
     units: str | None
+    grid_id: str
+    grid_window: tuple[int, int, int, int]
     hit_set: frozenset[tuple[str, datetime]]
     miss_set: frozenset[tuple[str, datetime]]
     warnings: tuple[str, ...]
@@ -65,29 +63,61 @@ class QueryResult:
     warnings: tuple[str, ...]
 
 
-def _stable_id(value: object) -> str:
-    encoded = json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    ).encode("utf-8")
-    return hashlib.blake2b(encoded, digest_size=16).hexdigest()
-
-
 def _query_id(query: Query) -> str:
-    return _stable_id(asdict(query))
+    return stable_128_bit_id(asdict(query))
 
 
 def _group_id(group: MatchingBlockGroup) -> str:
-    return _stable_id(
+    return stable_128_bit_id(
         {
-            "repository": group.repository,
-            "dataset": group.dataset,
+            "dataset_variant_id": group.dataset_variant_id,
             "variable": group.variable,
-            "additional_parameters": group.additional_parameters,
+            "grid_id": group.grid_id,
         }
     )
+
+
+def _coarsen_coordinate(
+    coordinate: xr.DataArray,
+    factor: int,
+    *,
+    circular: bool = False,
+) -> xr.DataArray:
+    if factor == 1:
+        return coordinate
+    windows = {
+        dimension: factor
+        for dimension in ("y", "x")
+        if dimension in coordinate.dims
+    }
+    if circular:
+        radians = np.deg2rad(coordinate)
+        sine = np.sin(radians).coarsen(windows, boundary="pad").mean()
+        cosine = np.cos(radians).coarsen(windows, boundary="pad").mean()
+        result = np.rad2deg(np.arctan2(sine, cosine)) % 360
+    else:
+        result = coordinate.coarsen(windows, boundary="pad").mean()
+    result.attrs = coordinate.attrs.copy()
+    return result
+
+
+def _product_grid(grid: xr.Dataset, factor: int) -> xr.Dataset:
+    latitude = _coarsen_coordinate(grid["latitude"], factor)
+    longitude = _coarsen_coordinate(
+        grid["longitude"], factor, circular=True
+    )
+    result = xr.Dataset(coords={"latitude": latitude, "longitude": longitude})
+    result["cell_area"] = grid["cell_area"].coarsen(
+        {"y": factor, "x": factor}, boundary="pad"
+    ).sum()
+    for name in ("projection_x", "projection_y"):
+        if name in grid.coords:
+            result = result.assign_coords(
+                {name: _coarsen_coordinate(grid[name], factor)}
+            )
+    if "crs" in grid:
+        result = result.assign_coords(crs=grid["crs"])
+    return result
 
 
 def _spatial_mask(data: xr.Dataset, region: BoundingBox) -> xr.DataArray:
@@ -104,276 +134,197 @@ def _spatial_mask(data: xr.Dataset, region: BoundingBox) -> xr.DataArray:
     return latitude_mask & longitude_mask
 
 
-def _spatial_coordinate_values(
-    data: xr.Dataset,
-    name: str,
-    cell_indices: np.ndarray,
-) -> np.ndarray:
-    """Broadcast one topology coordinate to y/x and select flattened cells."""
-    coordinate = data[name]
-    if coordinate.dims == ("y",):
-        values = np.broadcast_to(
-            np.asarray(coordinate.values)[:, None],
-            (data.sizes["y"], data.sizes["x"]),
-        )
-    elif coordinate.dims == ("x",):
-        values = np.broadcast_to(
-            np.asarray(coordinate.values)[None, :],
-            (data.sizes["y"], data.sizes["x"]),
-        )
-    elif coordinate.dims == ("y", "x"):
-        values = np.asarray(coordinate.values)
-    else:
-        raise ValueError(f"Topology coordinate {name!r} has unsupported dimensions")
-    return values.reshape(-1)[cell_indices]
+def _local_slice(
+    global_start: int,
+    global_stop: int,
+    partition_start: int,
+    factor: int,
+) -> slice:
+    start = max(0, (global_start - partition_start) // factor)
+    stop = max(start + 1, int(np.ceil((global_stop - partition_start) / factor)))
+    return slice(start, stop)
 
 
-def _inferred_curvilinear_vertices(
-    data: xr.Dataset,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Infer a vertex lattice when an irregular source provides centers only."""
-    latitude = np.asarray(data["latitude"].values, dtype=float)
-    longitude = np.rad2deg(
-        np.unwrap(np.unwrap(np.deg2rad(data["longitude"].values), axis=1), axis=0)
-    )
-
-    def vertices(values: np.ndarray) -> np.ndarray:
-        padded = np.empty((values.shape[0] + 2, values.shape[1] + 2), dtype=float)
-        padded[1:-1, 1:-1] = values
-        if values.shape[0] > 1:
-            padded[0, 1:-1] = 2 * values[0] - values[1]
-            padded[-1, 1:-1] = 2 * values[-1] - values[-2]
-        else:
-            padded[0, 1:-1] = padded[-1, 1:-1] = values[0]
-        if values.shape[1] > 1:
-            padded[1:-1, 0] = 2 * values[:, 0] - values[:, 1]
-            padded[1:-1, -1] = 2 * values[:, -1] - values[:, -2]
-        else:
-            padded[1:-1, 0] = padded[1:-1, -1] = values[:, 0]
-        padded[0, 0] = padded[0, 1] + padded[1, 0] - padded[1, 1]
-        padded[0, -1] = padded[0, -2] + padded[1, -1] - padded[1, -2]
-        padded[-1, 0] = padded[-1, 1] + padded[-2, 0] - padded[-2, 1]
-        padded[-1, -1] = padded[-1, -2] + padded[-2, -1] - padded[-2, -2]
-        return (
-            padded[:-1, :-1]
-            + padded[:-1, 1:]
-            + padded[1:, :-1]
-            + padded[1:, 1:]
-        ) / 4
-
-    return vertices(latitude), vertices(longitude)
-
-
-def _cell_corners(
-    data: xr.Dataset,
-    cell_indices: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return four geographic corners for each selected native/coarse cell."""
-    y_indices, x_indices = np.unravel_index(
-        cell_indices, (data.sizes["y"], data.sizes["x"])
-    )
-    # Explicit geographic bounds are authoritative for a rectilinear grid.
-    # Check them before projected CRS metadata so a stale auxiliary CRS cannot
-    # rotate otherwise regular latitude/longitude cells.
-    if "latitude_bounds" in data and "longitude_bounds" in data:
-        latitude_bounds = np.asarray(data["latitude_bounds"].values)[y_indices]
-        longitude_bounds = np.asarray(data["longitude_bounds"].values)[x_indices]
-        south = np.min(latitude_bounds, axis=1)
-        north = np.max(latitude_bounds, axis=1)
-        west = np.min(longitude_bounds, axis=1)
-        east = np.max(longitude_bounds, axis=1)
-        return (
-            np.column_stack((south, south, north, north)),
-            np.column_stack((west, east, east, west)) % 360,
-        )
-
-    transformer = transformer_from_grid_mapping(data)
-    if transformer is not None:
-        crs = data["crs"].attrs
-        x_origin = float(crs["polaris_projection_x_origin"])
-        y_origin = float(crs["polaris_projection_y_origin"])
-        x_step = float(crs["polaris_projection_x_step"])
-        y_step = float(crs["polaris_projection_y_step"])
-        x_start = _spatial_coordinate_values(data, "source_x_start", cell_indices)
-        x_stop = _spatial_coordinate_values(data, "source_x_stop", cell_indices)
-        y_start = _spatial_coordinate_values(data, "source_y_start", cell_indices)
-        y_stop = _spatial_coordinate_values(data, "source_y_stop", cell_indices)
-        x_edges = np.column_stack(
-            (x_origin + (x_start - 0.5) * x_step,
-             x_origin + (x_stop - 0.5) * x_step)
-        )
-        y_edges = np.column_stack(
-            (y_origin + (y_start - 0.5) * y_step,
-             y_origin + (y_stop - 0.5) * y_step)
-        )
-        west, east = np.min(x_edges, axis=1), np.max(x_edges, axis=1)
-        south, north = np.min(y_edges, axis=1), np.max(y_edges, axis=1)
-        projected_x = np.column_stack((west, east, east, west))
-        projected_y = np.column_stack((south, south, north, north))
-        longitude, latitude = transformer.transform(projected_x, projected_y)
-        return np.asarray(latitude), np.asarray(longitude) % 360
-
-    vertex_latitude, vertex_longitude = _inferred_curvilinear_vertices(data)
-    latitude = np.column_stack(
-        (
-            vertex_latitude[y_indices, x_indices],
-            vertex_latitude[y_indices, x_indices + 1],
-            vertex_latitude[y_indices + 1, x_indices + 1],
-            vertex_latitude[y_indices + 1, x_indices],
-        )
-    )
-    longitude = np.column_stack(
-        (
-            vertex_longitude[y_indices, x_indices],
-            vertex_longitude[y_indices, x_indices + 1],
-            vertex_longitude[y_indices + 1, x_indices + 1],
-            vertex_longitude[y_indices + 1, x_indices],
-        )
-    )
-    return latitude, longitude % 360
-
-
-def _block_to_cells(
-    data: xr.Dataset,
-    query: Query,
-    bucket_id: str,
-    cell_namespace: str,
-) -> xr.Dataset | None:
-    if "timestamp" not in data.dims:
+def _spatial_extent(mask: xr.DataArray) -> tuple[slice, slice] | None:
+    """Return the smallest y/x rectangle containing every true cell."""
+    y_indices = np.flatnonzero(mask.any(dim="x").values)
+    x_indices = np.flatnonzero(mask.any(dim="y").values)
+    if not y_indices.size or not x_indices.size:
         return None
-    data = data.sel(timestamp=slice(query.time_start, query.time_end))
+    return (
+        slice(int(y_indices[0]), int(y_indices[-1] + 1)),
+        slice(int(x_indices[0]), int(x_indices[-1] + 1)),
+    )
+
+
+def _required_statistics(query: Query) -> tuple[str, ...]:
+    if query.aggregation_method == "mean":
+        return ("polaris_weighted_sum", "polaris_weight_sum")
+    if query.aggregation_method == "min":
+        return ("polaris_min",)
+    return ("polaris_max",)
+
+
+@lru_cache(maxsize=16)
+def _cached_grid(path: str, modified_ns: int) -> xr.Dataset:
+    """Load one immutable canonical grid once per process and file version."""
+    del modified_ns
+    with xr.open_dataset(path) as opened:
+        return opened.load()
+
+
+def _load_grid(path: Path) -> xr.Dataset:
+    return _cached_grid(str(path), path.stat().st_mtime_ns)
+
+
+def _read_partition(
+    plan: QueryPlan,
+    group: MatchingBlockGroup,
+    record: dict[str, Any],
+    grid: xr.Dataset,
+    storage_root: Path,
+) -> xr.Dataset | None:
+    factor = int(record["coarseness_factor"])
+    product_grid = _product_grid(grid, factor)
+    windows = record["query_windows"]
+    y_start = min(window["grid_y_start"] for window in windows)
+    y_stop = max(window["grid_y_stop"] for window in windows)
+    x_start = min(window["grid_x_start"] for window in windows)
+    x_stop = max(window["grid_x_stop"] for window in windows)
+    y_slice = _local_slice(
+        y_start, y_stop, int(record["grid_y_start"]), factor
+    )
+    x_slice = _local_slice(
+        x_start, x_stop, int(record["grid_x_start"]), factor
+    )
+    grid_y_offset = int(record["grid_y_start"]) // factor
+    grid_x_offset = int(record["grid_x_start"]) // factor
+    grid_slice = product_grid.isel(
+        y=slice(grid_y_offset + y_slice.start, grid_y_offset + y_slice.stop),
+        x=slice(grid_x_offset + x_slice.start, grid_x_offset + x_slice.stop),
+    )
+    # Bucket lookup windows are only a coarse first pass. Refine them against
+    # the canonical coordinates before opening product variables so a small
+    # regional query reads only intersecting NetCDF chunks.
+    exact_extent = _spatial_extent(_spatial_mask(grid_slice, plan.query.region))
+    if exact_extent is None:
+        return None
+    exact_y, exact_x = exact_extent
+    y_slice = slice(y_slice.start + exact_y.start, y_slice.start + exact_y.stop)
+    x_slice = slice(x_slice.start + exact_x.start, x_slice.start + exact_x.stop)
+    grid_slice = grid_slice.isel(y=exact_y, x=exact_x)
+
+    path = storage_root / record["relative_path"]
+    required_statistics = _required_statistics(plan.query)
+    with xr.open_dataset(path) as opened:
+        selected = opened.sel(
+            timestamp=slice(plan.query.time_start, plan.query.time_end)
+        ).isel(y=y_slice, x=x_slice)
+        if all(name in selected for name in required_statistics):
+            selected = selected[list(required_statistics)]
+        elif plan.query.variable in selected:
+            selected = selected[[plan.query.variable]]
+        else:
+            raise ValueError(
+                f"Product {record['partition_id']} is missing variables for "
+                f"{plan.query.aggregation_method!r} aggregation"
+            )
+        data = selected.load()
     if data.sizes.get("timestamp", 0) == 0:
         return None
 
-    query_mask = _spatial_mask(data, query.region)
-    if not bool(query_mask.any().item()):
-        return None
-    data = spatially_crop_block(data, query_mask)
-    if not all(name in data for name in AGGREGATE_STATISTICS):
-        data = add_aggregate_statistics(data, query.variable)
-
-    query_mask = _spatial_mask(data, query.region)
-    valid_cells = (data["polaris_valid_count"] > 0).any(dim="timestamp")
-    cell_mask = (query_mask & valid_cells).stack(cell=("y", "x"))
-    cell_indices = np.flatnonzero(cell_mask.values)
-    if cell_indices.size == 0:
-        return None
-
-    required_topology = {
-        "source_y_index",
-        "source_x_index",
-        "source_y_start",
-        "source_y_stop",
-        "source_x_start",
-        "source_x_stop",
-        "grid_y_index",
-        "grid_x_index",
-    }
-    missing_topology = sorted(required_topology - set(data.coords))
-    if missing_topology:
-        raise ValueError(
-            "Stored block predates explicit grid topology; rebuild it before querying "
-            f"(missing: {', '.join(missing_topology)})"
-        )
-
-    names = [query.variable, *AGGREGATE_STATISTICS]
-    cells = data[names].stack(cell=("y", "x")).isel(cell=cell_indices)
-    latitude, longitude = xr.broadcast(data["latitude"], data["longitude"])
-    latitude = latitude.transpose("y", "x").stack(cell=("y", "x"))
-    longitude = (longitude % 360).transpose("y", "x").stack(cell=("y", "x"))
-    latitude_values = latitude.isel(cell=cell_indices).values
-    longitude_values = longitude.isel(cell=cell_indices).values
-    topology = {
-        name: _spatial_coordinate_values(data, name, cell_indices)
-        for name in required_topology
-    }
-    cell_keys = np.asarray([
-        f"{cell_namespace}:c{query.coarseness_factor}:"
-        f"{int(y_index)}:{int(x_index)}"
-        for y_index, x_index in zip(
-            topology["grid_y_index"], topology["grid_x_index"]
-        )
-    ])
-    corner_latitude, corner_longitude = _cell_corners(data, cell_indices)
-    coordinate_values: dict[str, Any] = {
-        "cell": cell_keys,
-        "cell_id": ("cell", cell_keys),
-        "latitude": ("cell", latitude_values),
-        "longitude": ("cell", longitude_values),
-        "bucket_id": ("cell", np.full(cell_keys.size, bucket_id, dtype=str)),
-        "vertex": np.arange(4, dtype=np.int8),
-        "corner_latitude": (("cell", "vertex"), corner_latitude),
-        "corner_longitude": (("cell", "vertex"), corner_longitude),
-    }
-    for name, values in topology.items():
-        coordinate_values[name] = ("cell", values.astype(np.int64))
-    for name in ("projection_x", "projection_y"):
-        if name in data.coords:
-            coordinate_values[name] = (
-                "cell",
-                _spatial_coordinate_values(data, name, cell_indices),
-            )
-    cells = cells.reset_index("cell", drop=True).assign_coords(
-        coordinate_values
+    data = data.assign_coords(
+        latitude=grid_slice["latitude"],
+        longitude=grid_slice["longitude"],
     )
-    for name in names:
-        cells[name] = cells[name].transpose("timestamp", "cell")
-    return cells.sortby("cell").load()
+    for name in ("projection_x", "projection_y", "crs"):
+        if name in grid_slice:
+            data = data.assign_coords({name: grid_slice[name]})
+    if not all(name in data for name in required_statistics):
+        data = add_aggregate_statistics(
+            data,
+            plan.query.variable,
+            grid_slice["cell_area"].reset_coords(drop=True),
+        )
+    mask = _spatial_mask(data, plan.query.region)
+    if not bool(mask.any().item()):
+        return None
+    if plan.query.aggregation_method == "mean":
+        valid = data["polaris_weight_sum"] > 0
+    else:
+        valid = data[required_statistics[0]].notnull()
+    if "timestamp" in valid.dims:
+        valid = valid.any(dim="timestamp")
+    populated_extent = _spatial_extent(mask & valid)
+    if populated_extent is None:
+        return None
+    populated_y, populated_x = populated_extent
+    data = data.isel(y=populated_y, x=populated_x)
+    mask = mask.isel(y=populated_y, x=populated_x)
+    grid_slice = grid_slice.isel(y=populated_y, x=populated_x)
+    y_slice = slice(
+        y_slice.start + populated_y.start,
+        y_slice.start + populated_y.stop,
+    )
+    x_slice = slice(
+        x_slice.start + populated_x.start,
+        x_slice.start + populated_x.stop,
+    )
+    for name, variable in tuple(data.data_vars.items()):
+        if {"y", "x"}.issubset(variable.dims):
+            data[name] = variable.where(mask)
+
+    local_y = np.arange(y_slice.start, y_slice.stop)
+    local_x = np.arange(x_slice.start, x_slice.stop)
+    global_y = int(record["grid_y_start"]) + local_y * factor
+    global_x = int(record["grid_x_start"]) + local_x * factor
+    return data.rename({"y": "grid_y", "x": "grid_x"}).assign_coords(
+        grid_y=global_y,
+        grid_x=global_x,
+    )
 
 
 def _get_data(
     plan: QueryPlan,
     group: MatchingBlockGroup,
-) -> tuple[
-    xr.Dataset | None,
-    tuple[dict[str, Any], ...],
-    tuple[str, ...],
-]:
-    """Derive paths, open blocks, crop them, and combine one block group."""
-    blocks = []
-    used_records = []
+    settings: Settings | None = None,
+) -> tuple[xr.Dataset | None, tuple[dict[str, Any], ...], tuple[str, ...]]:
+    """Read, slice, mask, and combine one group of time partitions."""
+    settings = settings or get_settings()
+    grid_path = settings.grids_dir / f"{group.grid_id}.nc"
+    partitions = []
+    used = []
     warnings = []
+    grid = _load_grid(grid_path)
     for record in group.blocks:
-        path = block_path(
-            plan.spatial_level,
-            record["bucket_id"],
-            record["block_id"],
+        data = _read_partition(
+            plan,
+            group,
+            record,
+            grid,
+            settings.products_dir.parent,
         )
-        with xr.open_dataset(path) as data:
-            cells = _block_to_cells(
-                data,
-                plan.query,
-                record["bucket_id"],
-                _group_id(group),
-            )
-        if cells is not None:
-            blocks.append(cells)
-            used_records.append(record)
-        else:
+        if data is None:
             warnings.append(
-                f"Block {record['block_id']} had no cells after coordinate cropping."
+                f"Partition {record['partition_id']} had no data after cropping."
             )
-    if not blocks:
-        return None, tuple(used_records), tuple(warnings)
-
+            continue
+        partitions.append(data)
+        used.append(record)
+    if not partitions:
+        return None, tuple(used), tuple(warnings)
     combined = xr.concat(
-        blocks,
-        dim="cell",
-        join="outer",
-        combine_attrs="override",
+        partitions,
+        dim="timestamp",
+        join="exact",
         data_vars="all",
         coords="minimal",
         compat="override",
-    )
-    if combined.get_index("cell").has_duplicates:
-        combined = combined.groupby("cell").first(skipna=True)
-    combined = combined.sortby(["timestamp", "cell"])
+        combine_attrs="override",
+    ).sortby("timestamp")
     timestamps = combined.get_index("timestamp")
     combined = combined.isel(timestamp=~timestamps.duplicated())
-    cell_ids = combined["cell"].values.astype(str)
-    combined = combined.assign_coords(cell_id=("cell", cell_ids))
-    combined = combined.assign_coords(cell=np.arange(combined.sizes["cell"]))
-    return combined, tuple(used_records), tuple(warnings)
+    return combined, tuple(used), tuple(warnings)
 
 
 def _requested_values(data: xr.Dataset, query: Query) -> xr.DataArray:
@@ -385,29 +336,37 @@ def _requested_values(data: xr.Dataset, query: Query) -> xr.DataArray:
     else:
         values = data["polaris_max"]
     values = values.rename(query.variable)
-    values.attrs = data[query.variable].attrs.copy()
+    for statistic in AGGREGATE_STATISTICS:
+        if statistic in data and data[statistic].attrs:
+            values.attrs = data[statistic].attrs.copy()
+            break
     return values
 
 
 def _collapse_data(
     data: xr.Dataset,
     query: Query,
-    dimension: str,
+    dimensions: str | tuple[str, ...],
 ) -> xr.Dataset:
     if query.aggregation_method == "mean":
         weighted_sum = data["polaris_weighted_sum"].sum(
-            dimension, skipna=True, min_count=1
+            dimensions, skipna=True, min_count=1
         )
         weight_sum = data["polaris_weight_sum"].sum(
-            dimension, skipna=True, min_count=1
+            dimensions, skipna=True, min_count=1
         )
         values = (weighted_sum / weight_sum).where(weight_sum > 0)
     elif query.aggregation_method == "min":
-        values = data["polaris_min"].min(dimension, skipna=True)
+        values = data["polaris_min"].min(dimensions, skipna=True)
     else:
-        values = data["polaris_max"].max(dimension, skipna=True)
+        values = data["polaris_max"].max(dimensions, skipna=True)
     values = values.rename(query.variable)
-    values.attrs = data[query.variable].attrs.copy()
+    statistic = {
+        "mean": "polaris_weighted_sum",
+        "min": "polaris_min",
+        "max": "polaris_max",
+    }[query.aggregation_method]
+    values.attrs = data[statistic].attrs.copy()
     return values.to_dataset()
 
 
@@ -421,76 +380,50 @@ def _apply_predicate(data: xr.Dataset, query: Query) -> xr.Dataset:
         "gt": operator.gt,
     }
     values = data[query.variable]
-    matches = values.notnull() & operations[query.predicate](
+    result = data.copy()
+    result["matches"] = values.notnull() & operations[query.predicate](
         values, query.filter_value
     )
-    result = data.copy()
-    result["matches"] = matches
     result["matches"].attrs = {
-        "long_name": f"{query.variable} {query.predicate} {query.filter_value}",
         "predicate": query.predicate,
         "filter_value": query.filter_value,
     }
     return result
 
 
-def _with_cell_topology(result: xr.Dataset, source: xr.Dataset) -> xr.Dataset:
-    """Restore cell coordinates whose vertex dimension is not on the value."""
-    if "cell" not in result.dims:
-        return result
-    for name, coordinate in source.coords.items():
-        if name in result.coords or "timestamp" in coordinate.dims:
-            continue
-        if set(coordinate.dims).issubset({"cell", "vertex"}):
-            result = result.assign_coords({name: coordinate})
-        elif not coordinate.dims:
-            result = result.assign_coords({name: coordinate})
-    return result
-
-
 def _compute_result(data: xr.Dataset, query: Query) -> xr.Dataset:
     if query.function == "get-data":
-        result = _requested_values(data, query).to_dataset()
-        return _with_cell_topology(result, data)
+        return _requested_values(data, query).to_dataset()
     if query.function == "timeseries":
-        return _collapse_data(data, query, "cell")
+        return _collapse_data(data, query, ("grid_y", "grid_x"))
     if query.function == "heatmap":
-        return _with_cell_topology(_collapse_data(data, query, "timestamp"), data)
+        return _collapse_data(data, query, "timestamp")
     if query.function == "find-time":
-        return _apply_predicate(_collapse_data(data, query, "cell"), query)
+        return _apply_predicate(
+            _collapse_data(data, query, ("grid_y", "grid_x")), query
+        )
     if query.function == "find-area":
-        result = _collapse_data(data, query, "timestamp")
-        return _apply_predicate(_with_cell_topology(result, data), query)
+        return _apply_predicate(_collapse_data(data, query, "timestamp"), query)
     raise ValueError(f"Unsupported function: {query.function!r}")
-
-
-def _unique_metadata_values(
-    records: tuple[dict[str, Any], ...],
-    name: str,
-) -> tuple[Any, ...]:
-    values = {}
-    for record in records:
-        value = record.get(name)
-        values.setdefault(json.dumps(value, sort_keys=True), value)
-    return tuple(values.values())
 
 
 def _source_info(
     group: MatchingBlockGroup,
     records: tuple[dict[str, Any], ...],
 ) -> SourceInfo:
+    source_resolutions = tuple(
+        dict.fromkeys(
+            record.get("source_temporal_resolution") for record in records
+        )
+    )
     return SourceInfo(
         repository=group.repository,
         dataset=group.dataset,
         variable=group.variable,
         additional_parameters=group.additional_parameters,
-        native_temporal_resolutions=_unique_metadata_values(
-            records, "native_temporal_resolution"
-        ),
-        native_spatial_resolutions=_unique_metadata_values(
-            records, "native_spatial_resolution"
-        ),
-        block_ids=tuple(record["block_id"] for record in records),
+        native_temporal_resolutions=source_resolutions,
+        native_spatial_resolutions=(),
+        partition_ids=tuple(record["partition_id"] for record in records),
     )
 
 
@@ -517,8 +450,10 @@ def _decorate_result(
             "coarseness_factor": plan.requested_data_grid.coarseness_factor,
             "time_unit": plan.requested_data_grid.time_unit,
             "aggregation_method": plan.query.aggregation_method,
-            "block_ids": json.dumps(
-                [record["block_id"] for record in records]
+            "grid_id": group.grid_id,
+            "grid_window": json.dumps(group.grid_window),
+            "partition_ids": json.dumps(
+                [record["partition_id"] for record in records]
             ),
         }
     )
@@ -527,13 +462,12 @@ def _decorate_result(
 
 def _write_result(data: xr.Dataset, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = path.with_name(path.name + ".partial")
+    temporary = path.with_name(path.name + ".partial")
     try:
-        data.to_netcdf(temporary_path)
-        temporary_path.replace(path)
-    except BaseException:
-        temporary_path.unlink(missing_ok=True)
-        raise
+        data.to_netcdf(temporary)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def execute_query(
@@ -541,7 +475,7 @@ def execute_query(
     settings: Settings | None = None,
     output_dir: Path | None = None,
 ) -> QueryResult:
-    """Plan and execute one query, returning a NetCDF result per group."""
+    """Plan and execute one query, returning one NetCDF result per group."""
     settings = settings or get_settings()
     plan = plan_query(query, settings)
     query_id = _query_id(plan.query)
@@ -553,14 +487,12 @@ def execute_query(
     warnings = list(plan.coverage.warnings)
     for group in plan.block_groups:
         coverage: BlockGroupCoverage = coverage_by_group[id(group)]
-        source_data, used_records, reading_warnings = _get_data(plan, group)
+        source_data, records, reading_warnings = _get_data(plan, group, settings)
         warnings.extend(reading_warnings)
         if source_data is None:
-            warning = (
-                f"No cells could be read for {group.repository}/{group.dataset}/"
-                f"{group.variable}."
+            warnings.append(
+                f"No data could be read for {group.repository}/{group.dataset}."
             )
-            warnings.append(warning)
             continue
         group_id = _group_id(group)
         result_data = _decorate_result(
@@ -569,11 +501,11 @@ def execute_query(
             group,
             query_id,
             group_id,
-            used_records,
+            records,
         )
         path = output_dir / query_id / plan.query.function / f"{group_id}.nc"
         _write_result(result_data, path)
-        source = _source_info(group, used_records)
+        source = _source_info(group, records)
         results.append(
             GroupResult(
                 group_id=group_id,
@@ -581,6 +513,8 @@ def execute_query(
                 file_path=path,
                 source=source,
                 units=result_data[plan.query.variable].attrs.get("units"),
+                grid_id=group.grid_id,
+                grid_window=group.grid_window,
                 hit_set=coverage.hit_set,
                 miss_set=coverage.miss_set,
                 warnings=coverage.warnings + reading_warnings,

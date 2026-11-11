@@ -10,6 +10,16 @@ interests: storage/data/tmp/interests.csv
 requests: storage/data/tmp/requests.csv
 downloaded_data: storage/data/tmp/downloaded/downloaded_data.jsonl
 standardized_data: storage/data/tmp/standardized/standardized_metadata.jsonl
+query_log: storage/data/query_log.jsonl
+
+############ storage catalogs and products ###########
+catalogs_dir: storage/data/catalogs
+datasets_catalog: storage/data/catalogs/datasets.jsonl
+grids_catalog: storage/data/catalogs/grids.jsonl
+grids_dir: storage/data/catalogs/grids
+bucket_lookup_dir: storage/data/bucket_lookup
+products_dir: storage/data/products
+product_index: storage/data/metadata.jsonl
 
 ############ combined dataset ###########
 combined_dataset:
@@ -34,30 +44,7 @@ container_grid:
   lon_size: 60
   lat_size: 30
 
-container_schemes:
-  capacity_1:
-    factor: 1
-    data_dir: storage/data/containers/capacity_1
-    metadata: storage/data/containers/capacity_1/metadata.jsonl
-    definitions: storage/data/container_definitions/capacity_1.json
-  capacity_2:
-    factor: 2
-    data_dir: storage/data/containers/capacity_2
-    metadata: storage/data/containers/capacity_2/metadata.jsonl
-    definitions: storage/data/container_definitions/capacity_2.json
-  capacity_4:
-    factor: 4
-    data_dir: storage/data/containers/capacity_4
-    metadata: storage/data/containers/capacity_4/metadata.jsonl
-    definitions: storage/data/container_definitions/capacity_4.json
-
-# Home spatial level for each stored spatial coarseness factor.
-coarseness_to_spatial_level:
-  1: capacity_1
-  2: capacity_2
-  4: capacity_4
-
-temporal_aggregation_resolutions: [1H, 3H, 1D, 1MS, 1YS]
+supported_coarseness_factors: [1, 2]
 
 # Values accepted by storage queries. These are separate from the ingestion
 # reducers below (aggregation methods), which describe how each scientific
@@ -77,7 +64,18 @@ name_docs: {
         "units": "degrees"
       },
       "variables": {
-        "sst": "sea_surface_temperature"
+        "sst": "sea_surface_temperature",
+        "2m_temperature": "2m_temperature",
+        "ice_temperature_layer_1": "ice_temperature_layer_1",
+        "ice_temperature_layer_2": "ice_temperature_layer_2",
+        "ice_temperature_layer_3": "ice_temperature_layer_3",
+        "ice_temperature_layer_4": "ice_temperature_layer_4",
+        "snow_depth": "snow_depth",
+        "snowfall": "snowfall",
+        "snowmelt": "snowmelt",
+        "surface_pressure": "surface_pressure",
+        "temperature_of_snow_layer": "temperature_of_snow_layer",
+        "total_precipitation": "total_precipitation"
       },
       "additional_parameters": {},
       "temporal_sampling": ["1H"]
@@ -94,7 +92,8 @@ name_docs: {
         "sst": "sea_surface_temperature"
       },
       "additional_parameters": {
-        "height": ["15m", "30m"]
+        "height": ["15m", "30m"],
+        "region": ["east", "west"]
       },
       "temporal_sampling": ["3H", "1D"]
     }
@@ -156,18 +155,27 @@ frontend_titles:
     "polaris": "Combined datasets"
   }
   variable: {
-    "sea_surface_temperature": "Sea Surface Temperature"
+    "sea_surface_temperature": "Sea Surface Temperature",
+    "2m_temperature": "2 m Temperature",
+    "ice_temperature_layer_1": "Ice Temperature Layer 1",
+    "ice_temperature_layer_2": "Ice Temperature Layer 2",
+    "ice_temperature_layer_3": "Ice Temperature Layer 3",
+    "ice_temperature_layer_4": "Ice Temperature Layer 4",
+    "snow_depth": "Snow Depth",
+    "snowfall": "Snowfall",
+    "snowmelt": "Snowmelt",
+    "surface_pressure": "Surface Pressure",
+    "temperature_of_snow_layer": "Temperature of Snow Layer",
+    "total_precipitation": "Total Precipitation"
   }
   resolution: {
     "0.25": {
       "source": [0.25],
-      "coarsen-2": [0.5],
-      "coarsen-4": [1.0]
+      "coarsen-2": [0.5]
     },
     "2.5": {
       "source": [2.5],
-      "coarsen-2": [5.0],
-      "coarsen-4": [10.0]
+      "coarsen-2": [5.0]
     }
   }
 
@@ -175,6 +183,39 @@ frontend_titles:
 aggregation_methods:
   sea_surface_temperature:
     temporal: mean
+    spatial: mean
+  2m_temperature:
+    temporal: mean
+    spatial: mean
+  ice_temperature_layer_1:
+    temporal: mean
+    spatial: mean
+  ice_temperature_layer_2:
+    temporal: mean
+    spatial: mean
+  ice_temperature_layer_3:
+    temporal: mean
+    spatial: mean
+  ice_temperature_layer_4:
+    temporal: mean
+    spatial: mean
+  snow_depth:
+    temporal: mean
+    spatial: mean
+  snowfall:
+    temporal: sum
+    spatial: mean
+  snowmelt:
+    temporal: sum
+    spatial: mean
+  surface_pressure:
+    temporal: mean
+    spatial: mean
+  temperature_of_snow_layer:
+    temporal: mean
+    spatial: mean
+  total_precipitation:
+    temporal: sum
     spatial: mean
   precipitation:
     temporal: sum

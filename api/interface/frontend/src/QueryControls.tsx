@@ -1,4 +1,4 @@
-import type { Catalog, Dataset, QueryForm, Region } from "./types";
+import type { AvailableProduct, Catalog, Dataset, QueryForm, Region } from "./types";
 import { fallbackTitle, repositoryTitle, spatialResolutionTitle, variableTitle } from "./titles";
 
 type Props = {
@@ -21,6 +21,44 @@ export default function QueryControls({ catalog, form, onChange, onSubmit, onSho
   const variables = Array.from(
     new Set((selectedDataset ? [selectedDataset] : datasets).flatMap((item) => item.variables)),
   ).sort();
+  const scopedDatasets = selectedDataset ? [selectedDataset] : datasets;
+
+  function productsFor(nextDatasets: Dataset[], variable: string): AvailableProduct[] {
+    const stored = nextDatasets.flatMap((dataset) => dataset.available_products ?? [])
+      .filter((product) => product.variable === variable);
+    const products = stored.length ? stored : catalog.time_units.flatMap((time_unit) =>
+      catalog.coarseness_factors.map((coarseness_factor) => ({ variable, time_unit, coarseness_factor })),
+    );
+    return Array.from(new Map(products.map((product) => [
+      `${product.time_unit}:${product.coarseness_factor}`,
+      product,
+    ])).values());
+  }
+
+  function withValidProduct(next: QueryForm, nextDatasets: Dataset[], variable: string): QueryForm {
+    const products = productsFor(nextDatasets, variable);
+    const exact = products.find((product) =>
+      product.time_unit === next.time_unit
+      && product.coarseness_factor === next.coarseness_factor
+    );
+    const selected = exact
+      ?? products.find((product) => product.time_unit === next.time_unit)
+      ?? products.find((product) => product.time_unit === "Source" && product.coarseness_factor === 1)
+      ?? products[0];
+    return selected ? {
+      ...next,
+      time_unit: selected.time_unit,
+      coarseness_factor: selected.coarseness_factor,
+    } : next;
+  }
+
+  const products = productsFor(scopedDatasets, form.variable);
+  const timeUnits = catalog.time_units.filter((timeUnit) =>
+    products.some((product) => product.time_unit === timeUnit)
+  );
+  const coarsenessFactors = catalog.coarseness_factors.filter((factor) =>
+    products.some((product) => product.time_unit === form.time_unit && product.coarseness_factor === factor)
+  );
 
   function changeRepository(repository: string) {
     const nextDatasets = repository
@@ -31,7 +69,12 @@ export default function QueryControls({ catalog, form, onChange, onSubmit, onSho
       : "";
     const scoped = dataset ? nextDatasets.filter((item) => item.name === dataset) : nextDatasets;
     const scopedVariables = Array.from(new Set(scoped.flatMap((item) => item.variables))).sort();
-    onChange({ ...form, repository, dataset, variable: scopedVariables[0] ?? "", additional_parameters: {} });
+    const variable = scopedVariables[0] ?? "";
+    onChange(withValidProduct(
+      { ...form, repository, dataset, variable, additional_parameters: {} },
+      scoped,
+      variable,
+    ));
   }
 
   function changeDataset(datasetName: string) {
@@ -40,12 +83,13 @@ export default function QueryControls({ catalog, form, onChange, onSubmit, onSho
     Object.entries(dataset?.additional_parameters ?? {}).forEach(([name, options]) => {
       if (options.length) nextParameters[name] = options[0];
     });
-    onChange({
+    const variable = dataset?.variables[0] ?? variables[0] ?? "";
+    onChange(withValidProduct({
       ...form,
       dataset: datasetName,
-      variable: dataset?.variables[0] ?? variables[0] ?? "",
+      variable,
       additional_parameters: nextParameters,
-    });
+    }, dataset ? [dataset] : datasets, variable));
   }
 
   function changeRegion(name: keyof Region, value: string) {
@@ -66,7 +110,7 @@ export default function QueryControls({ catalog, form, onChange, onSubmit, onSho
           <div className="control-button-field"><span>Catalog</span><button className="availability-button" type="button" onClick={onShowAvailability}>Available data</button></div>
           <label>Repository<select value={form.repository} onChange={(e) => changeRepository(e.target.value)}><option value="">Any</option>{repositories.map((item) => <option key={item.name} value={item.name}>{repositoryTitle(item)}</option>)}</select></label>
           <label>Dataset<select value={form.dataset} onChange={(e) => changeDataset(e.target.value)}><option value="">Any</option>{datasets.map((item) => <option key={item.name} value={item.name}>{item.display_name ?? fallbackTitle(item.name)}</option>)}</select></label>
-          <label>Variable<select required value={form.variable} onChange={(e) => onChange({ ...form, variable: e.target.value })}><option value="">Select variable</option>{variables.map((item) => <option key={item} value={item}>{variableTitle(catalog, item)}</option>)}</select></label>
+          <label>Variable<select required value={form.variable} onChange={(e) => onChange(withValidProduct({ ...form, variable: e.target.value }, scopedDatasets, e.target.value))}><option value="">Select variable</option>{variables.map((item) => <option key={item} value={item}>{variableTitle(catalog, item)}</option>)}</select></label>
           {selectedDataset && <AdditionalParameters dataset={selectedDataset} form={form} onChange={onChange} />}
           <label>Start<input type="date" required value={form.time_start} onChange={(e) => onChange({ ...form, time_start: e.target.value })} /></label>
           <label>End<input type="date" required value={form.time_end} onChange={(e) => onChange({ ...form, time_end: e.target.value })} /></label>
@@ -82,8 +126,21 @@ export default function QueryControls({ catalog, form, onChange, onSubmit, onSho
           ))}
         </fieldset>
         <div className="choice-grid sidebar-choices">
-          <SegmentedControl label="Spatial resolution" value={form.coarseness_factor} options={catalog.coarseness_factors.map((item) => ({ value: item, label: spatialResolutionTitle(catalog, selectedDataset, item) }))} onChange={(value) => onChange({ ...form, coarseness_factor: Number(value) })} />
-          <SegmentedControl label="Time resolution" value={form.time_unit} options={catalog.time_units.map((item) => ({ value: item, label: item }))} onChange={(value) => onChange({ ...form, time_unit: String(value) })} />
+          <SegmentedControl label="Spatial resolution" value={form.coarseness_factor} options={coarsenessFactors.map((item) => ({ value: item, label: spatialResolutionTitle(catalog, selectedDataset, item) }))} onChange={(value) => onChange({ ...form, coarseness_factor: Number(value) })} />
+          <SegmentedControl label="Time resolution" value={form.time_unit} options={timeUnits.map((item) => ({
+            value: item,
+            label: item === "Source" && selectedDataset?.temporal_sampling.length
+              ? `Source (${selectedDataset.temporal_sampling.join(" / ")})`
+              : item,
+          }))} onChange={(value) => {
+            const timeUnit = String(value);
+            const validFactors = products.filter((product) => product.time_unit === timeUnit).map((product) => product.coarseness_factor);
+            onChange({
+              ...form,
+              time_unit: timeUnit,
+              coarseness_factor: validFactors.includes(form.coarseness_factor) ? form.coarseness_factor : validFactors[0] ?? form.coarseness_factor,
+            });
+          }} />
           <SegmentedControl label="Function" value={form.function} options={catalog.functions.map((item) => ({ value: item, label: fallbackTitle(item), title: functionTooltip(item) }))} onChange={(value) => onChange({ ...form, function: String(value) })} />
           <SegmentedControl label="Aggregation" value={form.aggregation_method} options={catalog.aggregation_methods.map((item) => ({ value: item, label: fallbackTitle(item) }))} onChange={(value) => onChange({ ...form, aggregation_method: String(value) })} />
         </div>

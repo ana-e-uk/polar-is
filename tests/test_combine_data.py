@@ -12,7 +12,7 @@ from storage.ingest_data.combine_data import (
     regrid_daily_to_target,
     xesmf_grid,
 )
-from storage.grid_topology import add_rectilinear_bounds, assign_native_grid_indices
+from storage.grid_topology import add_rectilinear_bounds
 
 
 def _field(timestamps, value, *, missing=()):
@@ -35,7 +35,7 @@ def _rectilinear_dataset(timestamps, value, *, missing=()):
         latitude=("y", [0.0, 0.25], {"standard_name": "latitude"}),
         longitude=("x", [0.0, 0.25], {"standard_name": "longitude"}),
     )
-    return assign_native_grid_indices(add_rectilinear_bounds(data))
+    return add_rectilinear_bounds(data)
 
 
 def test_three_hour_daily_coverage_is_checked_per_cell():
@@ -122,7 +122,7 @@ def test_regrid_operator_and_grid_assets_are_reused(tmp_path, monkeypatch):
         assert "source_only" not in result.coords
 
     assert calls == [False, True]
-    assert len(list((tmp_path / "grids").glob("*.nc"))) == 1
+    assert not (tmp_path / "grids").exists()
     assert len(list((tmp_path / "weights").glob("*.nc"))) == 1
     assert len(list((tmp_path / "weights").glob("*.json"))) == 1
 
@@ -162,6 +162,8 @@ def test_build_combined_daily_record_for_existing_era5_grid(tmp_path):
     ]
     settings = SimpleNamespace(
         _standardized=tmp_path / "standardized",
+        grids_dir=tmp_path / "catalogs" / "grids",
+        grids_catalog=tmp_path / "catalogs" / "grids.jsonl",
         combined_dataset={
             "enabled": True,
             "repository": "polaris",

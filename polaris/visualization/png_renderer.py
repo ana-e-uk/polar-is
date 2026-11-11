@@ -87,43 +87,22 @@ def render_png(model: PlotModel, output_path: Path) -> Path:
             figsize=(8, 6), constrained_layout=True,
             subplot_kw={"projection": _projection(model, ccrs)},
         )
-        values = np.asarray([
-            np.nan if value is None else value for value in data["values"]
-        ], dtype=float)
-        polygons = []
-        valid_values = []
-        valid_indices = []
-        for index, (longitudes, latitudes, value) in enumerate(zip(
-            data["corner_longitudes"], data["corner_latitudes"], values
-        )):
-            if np.isnan(value) or any(item is None for item in (*longitudes, *latitudes)):
-                continue
-            polygons.append(list(zip(longitudes, latitudes)))
-            valid_values.append(value)
-            valid_indices.append(index)
-        collection = PolyCollection(
-            polygons, array=np.asarray(valid_values), cmap="viridis",
-            edgecolors=(1, 1, 1, 0.25), linewidths=0.3,
-            transform=ccrs.PlateCarree(),
+        values = np.asarray(data["values"], dtype=float)
+        longitudes = np.asarray(data["longitudes"], dtype=float)
+        latitudes = np.asarray(data["latitudes"], dtype=float)
+        collection = axes.scatter(
+            longitudes.ravel(), latitudes.ravel(), c=values.ravel(),
+            cmap="viridis", marker="s", transform=ccrs.PlateCarree(),
         )
-        axes.add_collection(collection)
-        axes.autoscale_view()
-        axes.set_aspect("equal", adjustable="datalim")
         colorbar = figure.colorbar(collection, ax=axes)
         colorbar.set_label(label)
         if model.function == "find-area" and "matches" in data:
             matches = np.asarray(data["matches"], dtype=bool)
-            matched = [
-                polygons[position]
-                for position, original_index in enumerate(valid_indices)
-                if matches[original_index]
-            ]
-            if matched:
-                outlines = PolyCollection(
-                    matched, facecolors="none", edgecolors="crimson", linewidths=1.2,
-                    transform=ccrs.PlateCarree(),
-                )
-                axes.add_collection(outlines)
+            axes.scatter(
+                longitudes[matches], latitudes[matches], facecolors="none",
+                edgecolors="crimson", marker="s", linewidths=1.2,
+                transform=ccrs.PlateCarree(),
+            )
         axes.set(
             xlabel="Longitude", ylabel="Latitude",
             title=f"{model.function}: {model.source_label}",

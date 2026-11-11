@@ -25,8 +25,15 @@ def _timestamps(values: Any) -> list[str]:
     ]
 
 
-def _values(data: xr.Dataset, variable: str) -> list[float | None]:
-    return [_json_number(value) for value in data[variable].values]
+def _json_array(values: Any) -> Any:
+    array = np.asarray(values)
+    if array.ndim == 0:
+        return _json_number(array.item())
+    return [_json_array(value) for value in array]
+
+
+def _values(data: xr.Dataset, variable: str) -> Any:
+    return _json_array(data[variable].values)
 
 
 def _numeric_coordinate(data: xr.Dataset, name: str) -> list[float | None]:
@@ -110,26 +117,16 @@ def serialize_plot_data(group: GroupResult, function: str) -> dict[str, Any]:
             )
         return payload
     if function in {"heatmap", "find-area"}:
+        latitude, longitude = xr.broadcast(data["latitude"], data["longitude"])
         payload = {
             "kind": function,
-            "cell_ids": [str(value) for value in data["cell_id"].values],
-            "latitudes": [_json_number(value) for value in data["latitude"].values],
-            "longitudes": [
-                _display_longitude(value) for value in data["longitude"].values
-            ],
-            "source_y_indices": _integer_coordinate(data, "source_y_index"),
-            "source_x_indices": _integer_coordinate(data, "source_x_index"),
-            "source_y_starts": _integer_coordinate(data, "source_y_start"),
-            "source_y_stops": _integer_coordinate(data, "source_y_stop"),
-            "source_x_starts": _integer_coordinate(data, "source_x_start"),
-            "source_x_stops": _integer_coordinate(data, "source_x_stop"),
-            "grid_y_indices": _integer_coordinate(data, "grid_y_index"),
-            "grid_x_indices": _integer_coordinate(data, "grid_x_index"),
-            "corner_latitudes": [
-                [_json_number(value) for value in row]
-                for row in data["corner_latitude"].values
-            ],
-            "corner_longitudes": _display_corner_longitudes(data),
+            "grid_id": group.grid_id,
+            "grid_y_indices": _integer_coordinate(data, "grid_y"),
+            "grid_x_indices": _integer_coordinate(data, "grid_x"),
+            "latitudes": _json_array(latitude.values),
+            "longitudes": _json_array(
+                ((np.asarray(longitude.values) + 180) % 360) - 180
+            ),
             "values": _values(data, variable),
         }
         if "projection_x" in data.coords:
@@ -137,7 +134,7 @@ def serialize_plot_data(group: GroupResult, function: str) -> dict[str, Any]:
         if "projection_y" in data.coords:
             payload["projection_y"] = _numeric_coordinate(data, "projection_y")
         if "matches" in data:
-            payload["matches"] = [bool(value) for value in data["matches"].values]
+            payload["matches"] = np.asarray(data["matches"].values, dtype=bool).tolist()
             payload["predicate"] = data["matches"].attrs.get("predicate")
             payload["filter_value"] = _json_number(
                 data["matches"].attrs.get("filter_value")
@@ -146,7 +143,10 @@ def serialize_plot_data(group: GroupResult, function: str) -> dict[str, Any]:
     return {
         "kind": "get-data",
         "timestamps": _timestamps(data["timestamp"].values),
-        "cell_count": int(data.sizes.get("cell", 0)),
+        "grid_shape": [
+            int(data.sizes.get("grid_y", 0)),
+            int(data.sizes.get("grid_x", 0)),
+        ],
     }
 
 

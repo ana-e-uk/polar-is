@@ -12,6 +12,13 @@ export type Dataset = {
   additional_parameters: Record<string, Array<string | number>>;
   temporal_sampling: string[];
   grid: GridDefinition | null;
+  available_products?: AvailableProduct[];
+};
+
+export type AvailableProduct = {
+  variable: string;
+  time_unit: string;
+  coarseness_factor: number;
 };
 
 export type Repository = {
@@ -81,23 +88,15 @@ type TimeData = {
 
 type AreaData = {
   kind: "heatmap" | "find-area";
-  cell_ids: string[];
-  latitudes: Array<number | null>;
-  longitudes: Array<number | null>;
-  source_y_indices: number[];
-  source_x_indices: number[];
-  source_y_starts: number[];
-  source_y_stops: number[];
-  source_x_starts: number[];
-  source_x_stops: number[];
+  grid_id: string;
+  latitudes: Array<Array<number | null>>;
+  longitudes: Array<Array<number | null>>;
   grid_y_indices: number[];
   grid_x_indices: number[];
   projection_x?: Array<number | null>;
   projection_y?: Array<number | null>;
-  corner_latitudes: Array<Array<number | null>>;
-  corner_longitudes: Array<Array<number | null>>;
-  values: Array<number | null>;
-  matches?: boolean[];
+  values: Array<Array<number | null>>;
+  matches?: boolean[][];
   predicate?: string;
   filter_value?: number;
 };
@@ -105,7 +104,7 @@ type AreaData = {
 type DownloadData = {
   kind: "get-data";
   timestamps: string[];
-  cell_count: number;
+  grid_shape: [number, number];
 };
 
 export type ResultGroup = {

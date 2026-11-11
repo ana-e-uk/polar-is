@@ -1,0 +1,1383 @@
+{
+  "created_at": "2026-09-21T18:41:49-05:00",
+  "repositories": {
+    "old": "/Users/bean/Documents/school/research/current/polar-is",
+    "redesigned": "/Users/bean/polar-is"
+  },
+  "storage": {
+    "old": {
+      "managed_bytes": 16205156313,
+      "total_data_bytes": 35503616025,
+      "managed_files": 342,
+      "product_files": 336,
+      "grid_files": 0,
+      "lookup_files": 0,
+      "metadata_files": 3,
+      "metadata_records": 336
+    },
+    "redesigned": {
+      "managed_bytes": 1425902001,
+      "total_data_bytes": 1605631507,
+      "managed_files": 26,
+      "product_files": 18,
+      "grid_files": 3,
+      "lookup_files": 3,
+      "metadata_files": 3,
+      "metadata_records": 26
+    }
+  },
+  "scenarios": [
+    {
+      "id": "era5_source_timeseries",
+      "name": "ERA5 Source (1H) timeseries, small, 2 days",
+      "old": {
+        "cold": {
+          "total_seconds": 0.49114712499431334,
+          "planning_seconds": 0.0028194170008646324,
+          "execution_seconds": 0.4883277079934487,
+          "groups": 1,
+          "timestamps": 48,
+          "spatial_cells": 0,
+          "valid_values": 48,
+          "result_bytes": 19142,
+          "datasets": [
+            "era5_single_level"
+          ],
+          "shapes": [
+            {
+              "timestamp": 48
+            }
+          ],
+          "warnings": []
+        },
+        "warm_runs": [
+          {
+            "total_seconds": 0.165103374994942,
+            "planning_seconds": 0.0027690830029314384,
+            "execution_seconds": 0.16233429199201055,
+            "groups": 1,
+            "timestamps": 48,
+            "spatial_cells": 0,
+            "valid_values": 48,
+            "result_bytes": 19142,
+            "datasets": [
+              "era5_single_level"
+            ],
+            "shapes": [
+              {
+                "timestamp": 48
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 0.1636410000064643,
+            "planning_seconds": 0.0027527920028660446,
+            "execution_seconds": 0.16088820800359827,
+            "groups": 1,
+            "timestamps": 48,
+            "spatial_cells": 0,
+            "valid_values": 48,
+            "result_bytes": 19142,
+            "datasets": [
+              "era5_single_level"
+            ],
+            "shapes": [
+              {
+                "timestamp": 48
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 0.16357579101168085,
+            "planning_seconds": 0.0027222920034546405,
+            "execution_seconds": 0.1608534990082262,
+            "groups": 1,
+            "timestamps": 48,
+            "spatial_cells": 0,
+            "valid_values": 48,
+            "result_bytes": 19142,
+            "datasets": [
+              "era5_single_level"
+            ],
+            "shapes": [
+              {
+                "timestamp": 48
+              }
+            ],
+            "warnings": []
+          }
+        ],
+        "api": {
+          "total_seconds": 0.20661262499925215,
+          "status": "completed",
+          "groups": 1,
+          "warnings": []
+        },
+        "peak_memory_bytes": 233619456,
+        "warm_median_seconds": 0.1636410000064643,
+        "warm_plan_median_seconds": 0.0027527920028660446,
+        "warm_execution_median_seconds": 0.16088820800359827
+      },
+      "redesigned": {
+        "cold": {
+          "total_seconds": 0.39024104199779686,
+          "planning_seconds": 0.0007347909995587543,
+          "execution_seconds": 0.3895062509982381,
+          "groups": 1,
+          "timestamps": 48,
+          "spatial_cells": 0,
+          "valid_values": 48,
+          "result_bytes": 19450,
+          "datasets": [
+            "era5_single_level"
+          ],
+          "shapes": [
+            {
+              "timestamp": 48
+            }
+          ],
+          "warnings": []
+        },
+        "warm_runs": [
+          {
+            "total_seconds": 0.06472487500286661,
+            "planning_seconds": 0.0003651250008260831,
+            "execution_seconds": 0.06435975000204053,
+            "groups": 1,
+            "timestamps": 48,
+            "spatial_cells": 0,
+            "valid_values": 48,
+            "result_bytes": 19450,
+            "datasets": [
+              "era5_single_level"
+            ],
+            "shapes": [
+              {
+                "timestamp": 48
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 0.06497604100150056,
+            "planning_seconds": 0.0003782909916481003,
+            "execution_seconds": 0.06459775000985246,
+            "groups": 1,
+            "timestamps": 48,
+            "spatial_cells": 0,
+            "valid_values": 48,
+            "result_bytes": 19450,
+            "datasets": [
+              "era5_single_level"
+            ],
+            "shapes": [
+              {
+                "timestamp": 48
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 0.06514183299441356,
+            "planning_seconds": 0.000370459005353041,
+            "execution_seconds": 0.06477137398906052,
+            "groups": 1,
+            "timestamps": 48,
+            "spatial_cells": 0,
+            "valid_values": 48,
+            "result_bytes": 19450,
+            "datasets": [
+              "era5_single_level"
+            ],
+            "shapes": [
+              {
+                "timestamp": 48
+              }
+            ],
+            "warnings": []
+          }
+        ],
+        "api": {
+          "total_seconds": 0.09209137500147335,
+          "status": "completed",
+          "groups": 1,
+          "warnings": []
+        },
+        "peak_memory_bytes": 250478592,
+        "warm_median_seconds": 0.06497604100150056,
+        "warm_plan_median_seconds": 0.000370459005353041,
+        "warm_execution_median_seconds": 0.06459775000985246
+      }
+    },
+    {
+      "id": "emsst_source_timeseries",
+      "name": "EMSST Source (1D) timeseries, small, 2 days",
+      "old": {
+        "cold": {
+          "total_seconds": 0.506425041006878,
+          "planning_seconds": 0.0028091250133002177,
+          "execution_seconds": 0.5036159159935778,
+          "groups": 1,
+          "timestamps": 2,
+          "spatial_cells": 0,
+          "valid_values": 2,
+          "result_bytes": 12934,
+          "datasets": [
+            "emsst"
+          ],
+          "shapes": [
+            {
+              "timestamp": 2
+            }
+          ],
+          "warnings": []
+        },
+        "warm_runs": [
+          {
+            "total_seconds": 0.1952649170125369,
+            "planning_seconds": 0.0026918340008705854,
+            "execution_seconds": 0.1925730830116663,
+            "groups": 1,
+            "timestamps": 2,
+            "spatial_cells": 0,
+            "valid_values": 2,
+            "result_bytes": 12934,
+            "datasets": [
+              "emsst"
+            ],
+            "shapes": [
+              {
+                "timestamp": 2
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 0.18868400000792462,
+            "planning_seconds": 0.0027139169978909194,
+            "execution_seconds": 0.1859700830100337,
+            "groups": 1,
+            "timestamps": 2,
+            "spatial_cells": 0,
+            "valid_values": 2,
+            "result_bytes": 12934,
+            "datasets": [
+              "emsst"
+            ],
+            "shapes": [
+              {
+                "timestamp": 2
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 0.19321820899494924,
+            "planning_seconds": 0.0027166669897269458,
+            "execution_seconds": 0.1905015420052223,
+            "groups": 1,
+            "timestamps": 2,
+            "spatial_cells": 0,
+            "valid_values": 2,
+            "result_bytes": 12934,
+            "datasets": [
+              "emsst"
+            ],
+            "shapes": [
+              {
+                "timestamp": 2
+              }
+            ],
+            "warnings": []
+          }
+        ],
+        "api": {
+          "total_seconds": 0.24860875000013039,
+          "status": "completed",
+          "groups": 1,
+          "warnings": []
+        },
+        "peak_memory_bytes": 192233472,
+        "warm_median_seconds": 0.19321820899494924,
+        "warm_plan_median_seconds": 0.0027139169978909194,
+        "warm_execution_median_seconds": 0.1905015420052223
+      },
+      "redesigned": {
+        "cold": {
+          "total_seconds": 0.3828807079989929,
+          "planning_seconds": 0.0007205419969977811,
+          "execution_seconds": 0.3821601660019951,
+          "groups": 1,
+          "timestamps": 2,
+          "spatial_cells": 0,
+          "valid_values": 2,
+          "result_bytes": 14048,
+          "datasets": [
+            "emsst"
+          ],
+          "shapes": [
+            {
+              "timestamp": 2
+            }
+          ],
+          "warnings": []
+        },
+        "warm_runs": [
+          {
+            "total_seconds": 0.05432041700987611,
+            "planning_seconds": 0.00029941600223537534,
+            "execution_seconds": 0.054021001007640734,
+            "groups": 1,
+            "timestamps": 2,
+            "spatial_cells": 0,
+            "valid_values": 2,
+            "result_bytes": 14048,
+            "datasets": [
+              "emsst"
+            ],
+            "shapes": [
+              {
+                "timestamp": 2
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 0.05353612500766758,
+            "planning_seconds": 0.00029424999956972897,
+            "execution_seconds": 0.05324187500809785,
+            "groups": 1,
+            "timestamps": 2,
+            "spatial_cells": 0,
+            "valid_values": 2,
+            "result_bytes": 14048,
+            "datasets": [
+              "emsst"
+            ],
+            "shapes": [
+              {
+                "timestamp": 2
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 0.05363033300091047,
+            "planning_seconds": 0.00029491698660422117,
+            "execution_seconds": 0.05333541601430625,
+            "groups": 1,
+            "timestamps": 2,
+            "spatial_cells": 0,
+            "valid_values": 2,
+            "result_bytes": 14048,
+            "datasets": [
+              "emsst"
+            ],
+            "shapes": [
+              {
+                "timestamp": 2
+              }
+            ],
+            "warnings": []
+          }
+        ],
+        "api": {
+          "total_seconds": 0.0779645000002347,
+          "status": "completed",
+          "groups": 1,
+          "warnings": []
+        },
+        "peak_memory_bytes": 279183360,
+        "warm_median_seconds": 0.05363033300091047,
+        "warm_plan_median_seconds": 0.00029491698660422117,
+        "warm_execution_median_seconds": 0.05333541601430625
+      }
+    },
+    {
+      "id": "multi_day_heatmap_small",
+      "name": "Multi-dataset Day heatmap, small",
+      "old": {
+        "cold": {
+          "total_seconds": 1.4659487080061808,
+          "planning_seconds": 0.0028402089956216514,
+          "execution_seconds": 1.4631084990105592,
+          "groups": 4,
+          "timestamps": 0,
+          "spatial_cells": 2324,
+          "valid_values": 2324,
+          "result_bytes": 803033,
+          "datasets": [
+            "carra_height",
+            "emsst",
+            "era5_single_level",
+            "combined"
+          ],
+          "shapes": [
+            {
+              "cell": 2189,
+              "vertex": 4
+            },
+            {
+              "cell": 39,
+              "vertex": 4
+            },
+            {
+              "cell": 48,
+              "vertex": 4
+            },
+            {
+              "cell": 48,
+              "vertex": 4
+            }
+          ],
+          "warnings": []
+        },
+        "warm_runs": [
+          {
+            "total_seconds": 1.1455210840067593,
+            "planning_seconds": 0.0028653749905060977,
+            "execution_seconds": 1.1426557090162532,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 2324,
+            "valid_values": 2324,
+            "result_bytes": 803033,
+            "datasets": [
+              "carra_height",
+              "emsst",
+              "era5_single_level",
+              "combined"
+            ],
+            "shapes": [
+              {
+                "cell": 2189,
+                "vertex": 4
+              },
+              {
+                "cell": 39,
+                "vertex": 4
+              },
+              {
+                "cell": 48,
+                "vertex": 4
+              },
+              {
+                "cell": 48,
+                "vertex": 4
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 1.13938862500072,
+            "planning_seconds": 0.002715542010264471,
+            "execution_seconds": 1.1366730829904554,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 2324,
+            "valid_values": 2324,
+            "result_bytes": 803033,
+            "datasets": [
+              "carra_height",
+              "emsst",
+              "era5_single_level",
+              "combined"
+            ],
+            "shapes": [
+              {
+                "cell": 2189,
+                "vertex": 4
+              },
+              {
+                "cell": 39,
+                "vertex": 4
+              },
+              {
+                "cell": 48,
+                "vertex": 4
+              },
+              {
+                "cell": 48,
+                "vertex": 4
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 1.1458929579966934,
+            "planning_seconds": 0.003109999990556389,
+            "execution_seconds": 1.142782958006137,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 2324,
+            "valid_values": 2324,
+            "result_bytes": 803033,
+            "datasets": [
+              "carra_height",
+              "emsst",
+              "era5_single_level",
+              "combined"
+            ],
+            "shapes": [
+              {
+                "cell": 2189,
+                "vertex": 4
+              },
+              {
+                "cell": 39,
+                "vertex": 4
+              },
+              {
+                "cell": 48,
+                "vertex": 4
+              },
+              {
+                "cell": 48,
+                "vertex": 4
+              }
+            ],
+            "warnings": []
+          }
+        ],
+        "api": {
+          "total_seconds": 1.3825609580089804,
+          "status": "completed",
+          "groups": 4,
+          "warnings": []
+        },
+        "peak_memory_bytes": 354811904,
+        "warm_median_seconds": 1.1455210840067593,
+        "warm_plan_median_seconds": 0.0028653749905060977,
+        "warm_execution_median_seconds": 1.1426557090162532
+      },
+      "redesigned": {
+        "cold": {
+          "total_seconds": 0.7168479590036441,
+          "planning_seconds": 0.000974750000750646,
+          "execution_seconds": 0.7158732090028934,
+          "groups": 4,
+          "timestamps": 0,
+          "spatial_cells": 4490,
+          "valid_values": 2324,
+          "result_bytes": 199730,
+          "datasets": [
+            "carra_height",
+            "era5_single_level",
+            "combined",
+            "whoi_cdr"
+          ],
+          "shapes": [
+            {
+              "grid_y": 65,
+              "grid_x": 67
+            },
+            {
+              "grid_y": 4,
+              "grid_x": 12
+            },
+            {
+              "grid_y": 4,
+              "grid_x": 12
+            },
+            {
+              "grid_y": 3,
+              "grid_x": 13
+            }
+          ],
+          "warnings": []
+        },
+        "warm_runs": [
+          {
+            "total_seconds": 0.34971424999821465,
+            "planning_seconds": 0.0004003750073025003,
+            "execution_seconds": 0.34931387499091215,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 4490,
+            "valid_values": 2324,
+            "result_bytes": 199730,
+            "datasets": [
+              "carra_height",
+              "era5_single_level",
+              "combined",
+              "whoi_cdr"
+            ],
+            "shapes": [
+              {
+                "grid_y": 65,
+                "grid_x": 67
+              },
+              {
+                "grid_y": 4,
+                "grid_x": 12
+              },
+              {
+                "grid_y": 4,
+                "grid_x": 12
+              },
+              {
+                "grid_y": 3,
+                "grid_x": 13
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 0.3519651249953313,
+            "planning_seconds": 0.0004233329964336008,
+            "execution_seconds": 0.3515417919988977,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 4490,
+            "valid_values": 2324,
+            "result_bytes": 199730,
+            "datasets": [
+              "carra_height",
+              "era5_single_level",
+              "combined",
+              "whoi_cdr"
+            ],
+            "shapes": [
+              {
+                "grid_y": 65,
+                "grid_x": 67
+              },
+              {
+                "grid_y": 4,
+                "grid_x": 12
+              },
+              {
+                "grid_y": 4,
+                "grid_x": 12
+              },
+              {
+                "grid_y": 3,
+                "grid_x": 13
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 0.35703262500464916,
+            "planning_seconds": 0.0004090000002179295,
+            "execution_seconds": 0.35662362500443123,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 4490,
+            "valid_values": 2324,
+            "result_bytes": 199730,
+            "datasets": [
+              "carra_height",
+              "era5_single_level",
+              "combined",
+              "whoi_cdr"
+            ],
+            "shapes": [
+              {
+                "grid_y": 65,
+                "grid_x": 67
+              },
+              {
+                "grid_y": 4,
+                "grid_x": 12
+              },
+              {
+                "grid_y": 4,
+                "grid_x": 12
+              },
+              {
+                "grid_y": 3,
+                "grid_x": 13
+              }
+            ],
+            "warnings": []
+          }
+        ],
+        "api": {
+          "total_seconds": 0.446292042004643,
+          "status": "completed",
+          "groups": 4,
+          "warnings": []
+        },
+        "peak_memory_bytes": 394084352,
+        "warm_median_seconds": 0.3519651249953313,
+        "warm_plan_median_seconds": 0.0004090000002179295,
+        "warm_execution_median_seconds": 0.3515417919988977
+      }
+    },
+    {
+      "id": "multi_day_heatmap_broad",
+      "name": "Multi-dataset Day heatmap, broad",
+      "old": {
+        "cold": {
+          "total_seconds": 9.64384712500032,
+          "planning_seconds": 0.003079583009821363,
+          "execution_seconds": 9.640767541990499,
+          "groups": 4,
+          "timestamps": 0,
+          "spatial_cells": 750269,
+          "valid_values": 750269,
+          "result_bytes": 219640115,
+          "datasets": [
+            "carra_height",
+            "emsst",
+            "era5_single_level",
+            "combined"
+          ],
+          "shapes": [
+            {
+              "cell": 620806,
+              "vertex": 4
+            },
+            {
+              "cell": 42627,
+              "vertex": 4
+            },
+            {
+              "cell": 42306,
+              "vertex": 4
+            },
+            {
+              "cell": 44530,
+              "vertex": 4
+            }
+          ],
+          "warnings": [
+            "copernicusclimatedatastore/carra_height/sea_surface_temperature/{\"height\":\"15m\",\"region\":\"east\"} is missing 15 of 30 bucket/time cells at the exact requested grid.",
+            "Block 422c306181a64c5969dd66a2d382777c had no cells after coordinate cropping."
+          ]
+        },
+        "warm_runs": [
+          {
+            "total_seconds": 9.307370374997845,
+            "planning_seconds": 0.005197625010623597,
+            "execution_seconds": 9.302172749987221,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 750269,
+            "valid_values": 750269,
+            "result_bytes": 219640115,
+            "datasets": [
+              "carra_height",
+              "emsst",
+              "era5_single_level",
+              "combined"
+            ],
+            "shapes": [
+              {
+                "cell": 620806,
+                "vertex": 4
+              },
+              {
+                "cell": 42627,
+                "vertex": 4
+              },
+              {
+                "cell": 42306,
+                "vertex": 4
+              },
+              {
+                "cell": 44530,
+                "vertex": 4
+              }
+            ],
+            "warnings": [
+              "copernicusclimatedatastore/carra_height/sea_surface_temperature/{\"height\":\"15m\",\"region\":\"east\"} is missing 15 of 30 bucket/time cells at the exact requested grid.",
+              "Block 422c306181a64c5969dd66a2d382777c had no cells after coordinate cropping."
+            ]
+          },
+          {
+            "total_seconds": 9.318397459006519,
+            "planning_seconds": 0.004883832996711135,
+            "execution_seconds": 9.313513626009808,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 750269,
+            "valid_values": 750269,
+            "result_bytes": 219640115,
+            "datasets": [
+              "carra_height",
+              "emsst",
+              "era5_single_level",
+              "combined"
+            ],
+            "shapes": [
+              {
+                "cell": 620806,
+                "vertex": 4
+              },
+              {
+                "cell": 42627,
+                "vertex": 4
+              },
+              {
+                "cell": 42306,
+                "vertex": 4
+              },
+              {
+                "cell": 44530,
+                "vertex": 4
+              }
+            ],
+            "warnings": [
+              "copernicusclimatedatastore/carra_height/sea_surface_temperature/{\"height\":\"15m\",\"region\":\"east\"} is missing 15 of 30 bucket/time cells at the exact requested grid.",
+              "Block 422c306181a64c5969dd66a2d382777c had no cells after coordinate cropping."
+            ]
+          },
+          {
+            "total_seconds": 9.261294457988697,
+            "planning_seconds": 0.003534457995556295,
+            "execution_seconds": 9.25775999999314,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 750269,
+            "valid_values": 750269,
+            "result_bytes": 219640115,
+            "datasets": [
+              "carra_height",
+              "emsst",
+              "era5_single_level",
+              "combined"
+            ],
+            "shapes": [
+              {
+                "cell": 620806,
+                "vertex": 4
+              },
+              {
+                "cell": 42627,
+                "vertex": 4
+              },
+              {
+                "cell": 42306,
+                "vertex": 4
+              },
+              {
+                "cell": 44530,
+                "vertex": 4
+              }
+            ],
+            "warnings": [
+              "copernicusclimatedatastore/carra_height/sea_surface_temperature/{\"height\":\"15m\",\"region\":\"east\"} is missing 15 of 30 bucket/time cells at the exact requested grid.",
+              "Block 422c306181a64c5969dd66a2d382777c had no cells after coordinate cropping."
+            ]
+          }
+        ],
+        "api": {
+          "total_seconds": 0.01718766600242816,
+          "status": "HTTP 422",
+          "groups": 0,
+          "error": "{\"detail\":\"Estimated spatial cells (4,571,703) exceed the conference limit (25,000); reduce the region, time range, or resolution\"}"
+        },
+        "peak_memory_bytes": 2843361280,
+        "warm_median_seconds": 9.307370374997845,
+        "warm_plan_median_seconds": 0.004883832996711135,
+        "warm_execution_median_seconds": 9.302172749987221
+      },
+      "redesigned": {
+        "cold": {
+          "total_seconds": 2.4412184590037214,
+          "planning_seconds": 0.001119874999858439,
+          "execution_seconds": 2.440098584003863,
+          "groups": 4,
+          "timestamps": 0,
+          "spatial_cells": 1340481,
+          "valid_values": 723260,
+          "result_bytes": 23394722,
+          "datasets": [
+            "carra_height",
+            "era5_single_level",
+            "combined",
+            "whoi_cdr"
+          ],
+          "shapes": [
+            {
+              "grid_y": 989,
+              "grid_x": 789
+            },
+            {
+              "grid_y": 141,
+              "grid_x": 1440
+            },
+            {
+              "grid_y": 141,
+              "grid_x": 1440
+            },
+            {
+              "grid_y": 107,
+              "grid_x": 1440
+            }
+          ],
+          "warnings": [
+            "copernicusclimatedatastore/carra_height/sea_surface_temperature/{\"height\":\"15m\",\"region\":\"east\"} is missing 15 of 30 bucket/time cells."
+          ]
+        },
+        "warm_runs": [
+          {
+            "total_seconds": 2.2022264159895713,
+            "planning_seconds": 0.0005447500006994233,
+            "execution_seconds": 2.201681665988872,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 1340481,
+            "valid_values": 723260,
+            "result_bytes": 23394722,
+            "datasets": [
+              "carra_height",
+              "era5_single_level",
+              "combined",
+              "whoi_cdr"
+            ],
+            "shapes": [
+              {
+                "grid_y": 989,
+                "grid_x": 789
+              },
+              {
+                "grid_y": 141,
+                "grid_x": 1440
+              },
+              {
+                "grid_y": 141,
+                "grid_x": 1440
+              },
+              {
+                "grid_y": 107,
+                "grid_x": 1440
+              }
+            ],
+            "warnings": [
+              "copernicusclimatedatastore/carra_height/sea_surface_temperature/{\"height\":\"15m\",\"region\":\"east\"} is missing 15 of 30 bucket/time cells."
+            ]
+          },
+          {
+            "total_seconds": 2.1510225830134004,
+            "planning_seconds": 0.0006132080015959218,
+            "execution_seconds": 2.1504093750118045,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 1340481,
+            "valid_values": 723260,
+            "result_bytes": 23394722,
+            "datasets": [
+              "carra_height",
+              "era5_single_level",
+              "combined",
+              "whoi_cdr"
+            ],
+            "shapes": [
+              {
+                "grid_y": 989,
+                "grid_x": 789
+              },
+              {
+                "grid_y": 141,
+                "grid_x": 1440
+              },
+              {
+                "grid_y": 141,
+                "grid_x": 1440
+              },
+              {
+                "grid_y": 107,
+                "grid_x": 1440
+              }
+            ],
+            "warnings": [
+              "copernicusclimatedatastore/carra_height/sea_surface_temperature/{\"height\":\"15m\",\"region\":\"east\"} is missing 15 of 30 bucket/time cells."
+            ]
+          },
+          {
+            "total_seconds": 2.1997527920029825,
+            "planning_seconds": 0.0005481249972945079,
+            "execution_seconds": 2.199204667005688,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 1340481,
+            "valid_values": 723260,
+            "result_bytes": 23394722,
+            "datasets": [
+              "carra_height",
+              "era5_single_level",
+              "combined",
+              "whoi_cdr"
+            ],
+            "shapes": [
+              {
+                "grid_y": 989,
+                "grid_x": 789
+              },
+              {
+                "grid_y": 141,
+                "grid_x": 1440
+              },
+              {
+                "grid_y": 141,
+                "grid_x": 1440
+              },
+              {
+                "grid_y": 107,
+                "grid_x": 1440
+              }
+            ],
+            "warnings": [
+              "copernicusclimatedatastore/carra_height/sea_surface_temperature/{\"height\":\"15m\",\"region\":\"east\"} is missing 15 of 30 bucket/time cells."
+            ]
+          }
+        ],
+        "api": {
+          "total_seconds": 0.015398040995933115,
+          "status": "HTTP 422",
+          "groups": 0,
+          "error": "{\"detail\":\"Estimated spatial cells (4,571,703) exceed the conference limit (25,000); reduce the region, time range, or resolution\"}"
+        },
+        "peak_memory_bytes": 778452992,
+        "warm_median_seconds": 2.1997527920029825,
+        "warm_plan_median_seconds": 0.0005481249972945079,
+        "warm_execution_median_seconds": 2.199204667005688
+      }
+    },
+    {
+      "id": "month_coarsen_2_heatmap",
+      "name": "Month, coarsen-2 heatmap, broad",
+      "old": {
+        "cold": {
+          "total_seconds": 2.980660290995729,
+          "planning_seconds": 0.0016094579914351925,
+          "execution_seconds": 2.979050833004294,
+          "groups": 4,
+          "timestamps": 0,
+          "spatial_cells": 190718,
+          "valid_values": 190718,
+          "result_bytes": 55922463,
+          "datasets": [
+            "carra_height",
+            "emsst",
+            "era5_single_level",
+            "combined"
+          ],
+          "shapes": [
+            {
+              "cell": 157131,
+              "vertex": 4
+            },
+            {
+              "cell": 11035,
+              "vertex": 4
+            },
+            {
+              "cell": 11033,
+              "vertex": 4
+            },
+            {
+              "cell": 11519,
+              "vertex": 4
+            }
+          ],
+          "warnings": []
+        },
+        "warm_runs": [
+          {
+            "total_seconds": 2.588771082999301,
+            "planning_seconds": 0.0010872919956455007,
+            "execution_seconds": 2.5876837910036556,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 190718,
+            "valid_values": 190718,
+            "result_bytes": 55922463,
+            "datasets": [
+              "carra_height",
+              "emsst",
+              "era5_single_level",
+              "combined"
+            ],
+            "shapes": [
+              {
+                "cell": 157131,
+                "vertex": 4
+              },
+              {
+                "cell": 11035,
+                "vertex": 4
+              },
+              {
+                "cell": 11033,
+                "vertex": 4
+              },
+              {
+                "cell": 11519,
+                "vertex": 4
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 2.562733708007727,
+            "planning_seconds": 0.0011786249961005524,
+            "execution_seconds": 2.5615550830116263,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 190718,
+            "valid_values": 190718,
+            "result_bytes": 55922463,
+            "datasets": [
+              "carra_height",
+              "emsst",
+              "era5_single_level",
+              "combined"
+            ],
+            "shapes": [
+              {
+                "cell": 157131,
+                "vertex": 4
+              },
+              {
+                "cell": 11035,
+                "vertex": 4
+              },
+              {
+                "cell": 11033,
+                "vertex": 4
+              },
+              {
+                "cell": 11519,
+                "vertex": 4
+              }
+            ],
+            "warnings": []
+          },
+          {
+            "total_seconds": 2.5827593750000233,
+            "planning_seconds": 0.0011001250095432624,
+            "execution_seconds": 2.58165924999048,
+            "groups": 4,
+            "timestamps": 0,
+            "spatial_cells": 190718,
+            "valid_values": 190718,
+            "result_bytes": 55922463,
+            "datasets": [
+              "carra_height",
+              "emsst",
+              "era5_single_level",
+              "combined"
+            ],
+            "shapes": [
+              {
+                "cell": 157131,
+                "vertex": 4
+              },
+              {
+                "cell": 11035,
+                "vertex": 4
+              },
+              {
+                "cell": 11033,
+                "vertex": 4
+              },
+              {
+                "cell": 11519,
+                "vertex": 4
+              }
+            ],
+            "warnings": []
+          }
+        ],
+        "api": {
+          "total_seconds": 0.01348962499469053,
+          "status": "HTTP 422",
+          "groups": 0,
+          "error": "{\"detail\":\"Estimated spatial cells (1,145,159) exceed the conference limit (25,000); reduce the region, time range, or resolution\"}"
+        },
+        "peak_memory_bytes": 1009713152,
+        "warm_median_seconds": 2.5827593750000233,
+        "warm_plan_median_seconds": 0.0011001250095432624,
+        "warm_execution_median_seconds": 2.58165924999048
+      },
+      "redesigned": {
+        "cold": {
+          "total_seconds": 0.9152486249950016,
+          "planning_seconds": 0.0018710830045165494,
+          "execution_seconds": 0.913377541990485,
+          "groups": 5,
+          "timestamps": 0,
+          "spatial_cells": 387765,
+          "valid_values": 195072,
+          "result_bytes": 6397334,
+          "datasets": [
+            "carra_height",
+            "emsst",
+            "era5_single_level",
+            "combined",
+            "whoi_cdr"
+          ],
+          "shapes": [
+            {
+              "grid_y": 495,
+              "grid_x": 395
+            },
+            {
+              "grid_y": 70,
+              "grid_x": 720
+            },
+            {
+              "grid_y": 71,
+              "grid_x": 720
+            },
+            {
+              "grid_y": 71,
+              "grid_x": 720
+            },
+            {
+              "grid_y": 55,
+              "grid_x": 720
+            }
+          ],
+          "warnings": [
+            "copernicusclimatedatastore/carra_height/sea_surface_temperature/{\"height\":\"15m\",\"region\":\"east\"} is missing 3 of 6 bucket/time cells."
+          ]
+        },
+        "warm_runs": [
+          {
+            "total_seconds": 0.4548382909997599,
+            "planning_seconds": 0.00046545799705199897,
+            "execution_seconds": 0.4543728330027079,
+            "groups": 5,
+            "timestamps": 0,
+            "spatial_cells": 387765,
+            "valid_values": 195072,
+            "result_bytes": 6397334,
+            "datasets": [
+              "carra_height",
+              "emsst",
+              "era5_single_level",
+              "combined",
+              "whoi_cdr"
+            ],
+            "shapes": [
+              {
+                "grid_y": 495,
+                "grid_x": 395
+              },
+              {
+                "grid_y": 70,
+                "grid_x": 720
+              },
+              {
+                "grid_y": 71,
+                "grid_x": 720
+              },
+              {
+                "grid_y": 71,
+                "grid_x": 720
+              },
+              {
+                "grid_y": 55,
+                "grid_x": 720
+              }
+            ],
+            "warnings": [
+              "copernicusclimatedatastore/carra_height/sea_surface_temperature/{\"height\":\"15m\",\"region\":\"east\"} is missing 3 of 6 bucket/time cells."
+            ]
+          },
+          {
+            "total_seconds": 0.4468296669947449,
+            "planning_seconds": 0.0004699160053860396,
+            "execution_seconds": 0.44635975098935887,
+            "groups": 5,
+            "timestamps": 0,
+            "spatial_cells": 387765,
+            "valid_values": 195072,
+            "result_bytes": 6397334,
+            "datasets": [
+              "carra_height",
+              "emsst",
+              "era5_single_level",
+              "combined",
+              "whoi_cdr"
+            ],
+            "shapes": [
+              {
+                "grid_y": 495,
+                "grid_x": 395
+              },
+              {
+                "grid_y": 70,
+                "grid_x": 720
+              },
+              {
+                "grid_y": 71,
+                "grid_x": 720
+              },
+              {
+                "grid_y": 71,
+                "grid_x": 720
+              },
+              {
+                "grid_y": 55,
+                "grid_x": 720
+              }
+            ],
+            "warnings": [
+              "copernicusclimatedatastore/carra_height/sea_surface_temperature/{\"height\":\"15m\",\"region\":\"east\"} is missing 3 of 6 bucket/time cells."
+            ]
+          },
+          {
+            "total_seconds": 0.4488181250053458,
+            "planning_seconds": 0.0004505830002017319,
+            "execution_seconds": 0.44836754200514406,
+            "groups": 5,
+            "timestamps": 0,
+            "spatial_cells": 387765,
+            "valid_values": 195072,
+            "result_bytes": 6397334,
+            "datasets": [
+              "carra_height",
+              "emsst",
+              "era5_single_level",
+              "combined",
+              "whoi_cdr"
+            ],
+            "shapes": [
+              {
+                "grid_y": 495,
+                "grid_x": 395
+              },
+              {
+                "grid_y": 70,
+                "grid_x": 720
+              },
+              {
+                "grid_y": 71,
+                "grid_x": 720
+              },
+              {
+                "grid_y": 71,
+                "grid_x": 720
+              },
+              {
+                "grid_y": 55,
+                "grid_x": 720
+              }
+            ],
+            "warnings": [
+              "copernicusclimatedatastore/carra_height/sea_surface_temperature/{\"height\":\"15m\",\"region\":\"east\"} is missing 3 of 6 bucket/time cells."
+            ]
+          }
+        ],
+        "api": {
+          "total_seconds": 0.012278500013053417,
+          "status": "HTTP 422",
+          "groups": 0,
+          "error": "{\"detail\":\"Estimated spatial cells (1,160,850) exceed the conference limit (25,000); reduce the region, time range, or resolution\"}"
+        },
+        "peak_memory_bytes": 392773632,
+        "warm_median_seconds": 0.4488181250053458,
+        "warm_plan_median_seconds": 0.00046545799705199897,
+        "warm_execution_median_seconds": 0.44836754200514406
+      }
+    }
+  ]
+}

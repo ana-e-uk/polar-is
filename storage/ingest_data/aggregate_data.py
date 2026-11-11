@@ -1,12 +1,13 @@
 """Create the configured temporal/spatial hierarchy from native datasets.
 
-Every product is derived from the standardized native dataset and is split by
-the common :func:`write_blocks` path. Spatial factors are never chained.
+Every product is derived from the standardized native dataset and written as
+time partitions through one shared index. Spatial factors are never chained.
 """
 
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 import tempfile
 
@@ -15,20 +16,23 @@ import pandas as pd
 import xarray as xr
 
 from polaris.config import get_settings
-from storage.ingest_data.make_data_blocks import (
+from storage.bucket_lookup import ensure_bucket_lookup
+from storage.ingest_data.product_partitions import (
     _preserve_compression,
     timestamp_string,
-    write_blocks,
+    write_product_partitions,
 )
 from storage.ingest_data.standardize import read_metadata
-from storage.grid_topology import INDEX_COORDINATES
-from storage.manage.space_containers import ensure_container_scheme
+from storage.grid_topology import canonical_grid, ensure_grid_catalog
 
 
 _RESOLUTION_ALIASES = {
     "H": "1H",
     "1H": "1H",
     "3H": "3H",
+    "W": "1W",
+    "1W": "1W",
+    "7D": "1W",
     "D": "1D",
     "1D": "1D",
     "M": "1MS",
@@ -44,8 +48,9 @@ _RESOLUTION_ORDER = {
     "1H": 0,
     "3H": 1,
     "1D": 2,
-    "1MS": 3,
-    "1YS": 4,
+    "1W": 3,
+    "1MS": 4,
+    "1YS": 5,
 }
 _XR_FREQUENCY = {
     "1H": "1h",
@@ -58,10 +63,59 @@ _XR_FREQUENCY = {
 AGGREGATE_STATISTICS = (
     "polaris_weighted_sum",
     "polaris_weight_sum",
-    "polaris_valid_count",
     "polaris_min",
     "polaris_max",
 )
+
+_PRODUCT_RESOLUTIONS = {
+    "Hour": "1H",
+    "Day": "1D",
+    "Month": "1MS",
+    "Year": "1YS",
+}
+
+
+@dataclass(frozen=True)
+class ProductSpec:
+    """One product selected by the ingestion policy."""
+
+    time_unit: str
+    coarseness_factor: int
+
+
+def product_policy(native_resolution: str) -> tuple[ProductSpec, ...]:
+    """Return the complete reduced product set for one source cadence.
+
+    Source is retained only at its native spatial resolution. Temporal
+    products are strictly coarser than Source, and the factor-2 spatial product
+    is reserved for monthly and yearly data.
+    """
+    native = normalize_temporal_resolution(native_resolution)
+    if native == "1W":
+        raise ValueError(
+            "Weekly source data is unsupported until calendar-boundary "
+            "weighting is defined"
+        )
+
+    products = [ProductSpec("Source", 1)]
+    for time_unit, target in _PRODUCT_RESOLUTIONS.items():
+        if _RESOLUTION_ORDER[target] <= _RESOLUTION_ORDER[native]:
+            continue
+        products.append(ProductSpec(time_unit, 1))
+        if time_unit in {"Month", "Year"}:
+            products.append(ProductSpec(time_unit, 2))
+    return tuple(products)
+
+
+def combined_product_policy() -> tuple[ProductSpec, ...]:
+    """Return the fixed products materialized for the daily Combined dataset."""
+    return (
+        ProductSpec("Day", 1),
+        ProductSpec("Month", 1),
+        ProductSpec("Month", 2),
+        ProductSpec("Year", 1),
+        ProductSpec("Year", 2),
+    )
 
 
 def normalize_temporal_resolution(value: str) -> str:
@@ -89,6 +143,8 @@ def infer_native_temporal_resolution(
         return "3H"
     if np.all(differences == pd.Timedelta(days=1).value):
         return "1D"
+    if np.all(differences == pd.Timedelta(days=7).value):
+        return "1W"
     if all(
         current == previous + pd.offsets.MonthBegin(1)
         for previous, current in zip(index[:-1], index[1:])
@@ -100,20 +156,6 @@ def infer_native_temporal_resolution(
     ):
         return "1YS"
     raise ValueError("Could not infer a supported uniform native time interval")
-
-
-def eligible_temporal_resolutions(
-    native_resolution: str,
-    configured_resolutions: tuple[str, ...] | list[str],
-) -> list[str]:
-    """Return configured outputs no finer than the native sampling."""
-    native = normalize_temporal_resolution(native_resolution)
-    normalized = [normalize_temporal_resolution(item) for item in configured_resolutions]
-    return [
-        item
-        for item in dict.fromkeys(normalized)
-        if _RESOLUTION_ORDER[item] >= _RESOLUTION_ORDER[native]
-    ]
 
 
 def _resample_reduce(
@@ -166,7 +208,11 @@ def _complete_period_labels(
             freq=native_frequency,
             inclusive="left",
         )
-        if actual.equals(expected):
+        # Some products timestamp interval midpoints (for example 01:30 for a
+        # three-hour interval). Uniform cadence is validated before this
+        # function; a full interval count therefore establishes completeness
+        # without requiring boundary-aligned timestamp labels.
+        if len(actual) == len(expected):
             valid.append(label.to_datetime64())
     return valid
 
@@ -198,15 +244,12 @@ def temporally_aggregate(
         if "timestamp" in array.dims:
             auxiliary = array.resample(timestamp=_XR_FREQUENCY[target])
             if name == "source_count":
-                result[name] = auxiliary.mean(skipna=True, keep_attrs=True)
+                result[name] = auxiliary.max(skipna=True, keep_attrs=True)
             else:
                 result[name] = auxiliary.first(keep_attrs=True)
         else:
             result[name] = array
     if has_statistics:
-        result["polaris_valid_count"] = data[
-            "polaris_valid_count"
-        ].resample(timestamp=_XR_FREQUENCY[target]).sum()
         result["polaris_min"] = data["polaris_min"].resample(
             timestamp=_XR_FREQUENCY[target]
         ).min(skipna=True)
@@ -287,12 +330,13 @@ def _coarsen_reduce(
 def add_aggregate_statistics(
     data: xr.Dataset,
     variable: str,
+    cell_area: xr.DataArray | None = None,
 ) -> xr.Dataset:
     """Add statistics used to combine spatial aggregate values correctly."""
     result = data.copy()
-    if "cell_area" in result:
+    if cell_area is None and "cell_area" in result:
         cell_area = result["cell_area"]
-    else:
+    if cell_area is None:
         latitude, _ = xr.broadcast(result["latitude"], result["longitude"])
         cell_area = np.cos(np.deg2rad(latitude)).clip(min=0)
         cell_area = cell_area.transpose("y", "x")
@@ -301,7 +345,6 @@ def add_aggregate_statistics(
             "long_name": "relative grid-cell area",
             "units": "relative",
         }
-        result["cell_area"] = cell_area
 
     values = result[variable]
     valid = values.notnull()
@@ -309,9 +352,14 @@ def add_aggregate_statistics(
     result["polaris_weight_sum"] = cell_area.where(valid, 0).transpose(
         *values.dims
     )
-    result["polaris_valid_count"] = valid.astype(np.int32)
     result["polaris_min"] = values
     result["polaris_max"] = values
+    for name in ("polaris_weighted_sum", "polaris_min", "polaris_max"):
+        result[name].attrs = values.attrs.copy()
+    result["polaris_weight_sum"].attrs = {
+        "long_name": "sum of valid spatial weights",
+        "units": cell_area.attrs.get("units", "1"),
+    }
     return result
 
 
@@ -329,6 +377,8 @@ def _circularly_coarsen_longitude(
 
 
 def _auxiliary_spatial_method(name: str, array: xr.DataArray) -> str:
+    if name == "source_count":
+        return "max"
     standard_name = str(array.attrs.get("standard_name", "")).lower()
     if standard_name == "cell_area" or "cell_area" in name.lower():
         return "sum"
@@ -348,42 +398,6 @@ def _coarsen_axis_bounds(
     result = xr.concat([lower, upper], dim="bounds").transpose(dimension, "bounds")
     result = result.assign_coords(bounds=[0, 1])
     result.attrs = bounds.attrs.copy()
-    return result
-
-
-def _assign_coarsened_topology(
-    result: xr.Dataset,
-    data: xr.Dataset,
-    factor: int,
-) -> xr.Dataset:
-    """Preserve native spans and define stable requested-grid indices."""
-    coordinates: dict[str, tuple[str, object, dict]] = {}
-    for axis in ("y", "x"):
-        start_name = f"source_{axis}_start"
-        stop_name = f"source_{axis}_stop"
-        index_name = f"source_{axis}_index"
-        grid_name = f"grid_{axis}_index"
-        if start_name not in data.coords or stop_name not in data.coords:
-            continue
-        starts = _coarsen_reduce(data[start_name], factor, "first").astype(np.int64)
-        stops = _coarsen_reduce(data[stop_name], factor, "max").astype(np.int64)
-        coordinate_values = {
-            start_name: starts,
-            stop_name: stops,
-            # The source index is the native anchor of a coarse cell; the
-            # complete contributing interval is represented by start/stop.
-            index_name: starts.copy(),
-            grid_name: (starts // factor).astype(np.int64),
-        }
-        for name, values in coordinate_values.items():
-            attrs = data[name].attrs.copy() if name in data.coords else {}
-            # Do not carry the source dimension index: xarray assigns mean
-            # labels to coarsened dimensions, whereas ``first`` retains the
-            # original labels. Only the integer topology values belong here.
-            coordinates[name] = (axis, values.data, attrs)
-    if coordinates:
-        result = result.assign_coords(coordinates)
-    result.attrs["polaris_coarseness_factor"] = factor
     return result
 
 
@@ -426,6 +440,8 @@ def spatially_aggregate(
             factor,
             auxiliary_method,
         )
+        if name == "source_count":
+            result[name] = result[name].astype(array.dtype)
 
     if has_statistics:
         result["polaris_weighted_sum"] = _coarsen_reduce(
@@ -433,9 +449,6 @@ def spatially_aggregate(
         )
         result["polaris_weight_sum"] = _coarsen_reduce(
             data["polaris_weight_sum"], factor, "sum"
-        )
-        result["polaris_valid_count"] = _coarsen_reduce(
-            data["polaris_valid_count"], factor, "sum"
         )
         result["polaris_min"] = _coarsen_reduce(
             data["polaris_min"], factor, "min"
@@ -465,7 +478,6 @@ def spatially_aggregate(
     for name, coordinate in data.coords.items():
         if (
             name in {"latitude", "longitude"}
-            or name in INDEX_COORDINATES
             or name in result.coords
         ):
             continue
@@ -484,7 +496,7 @@ def spatially_aggregate(
         if name in data.data_vars:
             _preserve_compression(data[name], result[name])
     result.attrs = data.attrs.copy()
-    result = _assign_coarsened_topology(result, data, factor)
+    result.attrs["polaris_coarseness_factor"] = factor
     return result
 
 
@@ -538,10 +550,6 @@ def aggregate_record(
 ) -> list[dict]:
     """Generate every eligible capacity/time product for one native record."""
     settings = settings or get_settings()
-    grids = {
-        name: ensure_container_scheme(scheme, settings.container_grid)
-        for name, scheme in settings.container_schemes.items()
-    }
     variable = record["variable"]
     try:
         methods = settings.aggregation_methods[variable]
@@ -556,49 +564,65 @@ def aggregate_record(
         native_resolution = infer_native_temporal_resolution(
             native["timestamp"], record["temporal_resolution"]
         )
-        native_with_statistics = add_aggregate_statistics(native, variable)
-        targets = eligible_temporal_resolutions(
-            native_resolution,
-            settings.temporal_aggregation_resolutions,
+        is_combined = (
+            record.get("repository") == settings.combined_dataset.get("repository")
+            and record.get("dataset") == settings.combined_dataset.get("dataset")
         )
-        for target in targets:
-            temporal_data = temporally_aggregate(
-                native_with_statistics,
-                variable,
-                native_resolution,
-                target,
-                temporal_method,
-            )
+        products = combined_product_policy() if is_combined else product_policy(
+            native_resolution
+        )
+        grid_record = ensure_grid_catalog(
+            native,
+            record.get("grid_type"),
+            settings=settings,
+        )
+        grid = canonical_grid(native, record.get("grid_type"))
+        ensure_bucket_lookup(grid_record, grid, settings=settings)
+        native_with_statistics = add_aggregate_statistics(
+            native,
+            variable,
+            grid["cell_area"].reset_coords(drop=True),
+        )
+        temporal_products = {}
+        for product_spec in products:
+            if product_spec.time_unit == "Source":
+                target = native_resolution
+                temporal_data = native
+            elif is_combined and product_spec.time_unit == "Day":
+                target = native_resolution
+                temporal_data = native_with_statistics
+            else:
+                target = _PRODUCT_RESOLUTIONS[product_spec.time_unit]
+                if target not in temporal_products:
+                    temporal_products[target] = temporally_aggregate(
+                        native_with_statistics,
+                        variable,
+                        native_resolution,
+                        target,
+                        temporal_method,
+                    )
+                temporal_data = temporal_products[target]
             if temporal_data.sizes.get("timestamp", 0) == 0:
                 continue
-            for name, scheme in settings.container_schemes.items():
-                factor = scheme.factor
-                is_aggregate = target != native_resolution or factor != 1
-                data_for_spatial = temporal_data if is_aggregate else native
-                product = spatially_aggregate(
-                    data_for_spatial,
-                    variable,
-                    factor,
-                    spatial_method,
-                )
-                metadata = _product_metadata(
-                    record,
+            factor = product_spec.coarseness_factor
+            product = spatially_aggregate(
+                temporal_data,
+                variable,
+                factor,
+                spatial_method,
+            )
+            written.extend(
+                write_product_partitions(
                     product,
-                    target,
-                    factor,
-                    None if target == native_resolution else temporal_method,
-                    None if factor == 1 else spatial_method,
-                    native_resolution,
+                    record,
+                    grid_id=grid_record.grid_id,
+                    grid_shape=(grid_record.shape_y, grid_record.shape_x),
+                    time_unit=product_spec.time_unit,
+                    temporal_resolution=target,
+                    coarseness_factor=factor,
+                    settings=settings,
                 )
-                written.extend(
-                    write_blocks(
-                        product,
-                        record,
-                        scheme,
-                        grid=grids[name],
-                        product_metadata=metadata,
-                    )
-                )
+            )
     return written
 
 
