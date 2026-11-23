@@ -76,7 +76,7 @@ It is not written to disk. `logout` forgets it immediately.
 For automated local testing, `POLARIS_API_TOKEN` can supply a token. Avoid
 placing real tokens directly in shell commands or source-controlled files.
 
-## Discover available data
+## List available data
 
 Use `catalog` to list repository, dataset, variable, coarseness, and time-unit
 names accepted by the connected server:

@@ -1,14 +1,64 @@
-# PolarIS: A Polar Data Infrastructure for Interactive and Scalable Science
+# POLAR-IS
 
+Sections:
+- [Services](#services) lists services of POLAR-IS and overview of commands to use them.
+- [Dev Docs](#dev-docs) provides development information and more detailed description of the POLAR-IS internals.
 
-PolarIS is a system built to be the software layer that manages data access,
-storage, and usage for polar scientists. Below is information about how 
-researchers can use the current PolarIS supported by the Data Management Lab
-at the University of Minnesota for, how to initialize your own PolarIS, and
-how it works.
+## Services
 
-Data currently supported by this version of PolarIS is:
+1. Access data through a [Web interface](#access-data-through-web-interface) and [Command-line interface](#access-data-through-command-line-interface)
+  * Full documentation on APIs: [api.md](/api/documentation/api.md)
+2. [Query data](#query-data)
+3. [Available data](#available-data)
+4. [Create a local copy of POLAR-IS](#create-a-local-copy)
 
+### **Access data through web interface**
+
+POLAR-IS web interface can be accessed at https://iharpv.cs.umn.edu. 
+
+Note the interface may not be available during server maintenance.
+
+### **Access data through command-line-interface**
+
+1. Download and install command-line interface
+
+```bash
+git clone https://github.com/ana-e-uk/polar-is.git
+cd polar-is
+python3 -m venv .venv
+.venv/bin/python -m pip install -e .
+```
+
+2. Initialize command-line interface once `polar-is` is installed. This will connect to the default server.
+
+```bash
+.venv/bin/polar-is \
+  --output ./polar-is-results
+```
+
+`--output` sets the initial download directory.
+
+Run `help` or `?` to see a list of commands, or find more information in (ADD doc link).
+
+**+++** Behind the scenes **+++**
+
+* Command-line interface [documentation](/api/documentation/command-line.md).
+
+### **Query data**
+
+POLAR-IS supports the following functions:
+
+| Function | Result |
+|---|---|
+| `get-data` | Selected time × space data |
+| `timeseries` | Spatially collapses the region; one value per timestamp |
+| `heatmap` | Temporally collapses the interval; one value per cell |
+| `find-time` | Full timeseries plus a Boolean `matches` array |
+| `find-area` | Full heatmap plus a Boolean `matches` array |
+
+A query can be made using the CLI and the web interface. Accepted jobs are added to a query.
+
+### **Available data**
 * *NOAA Climate Data Record (CDR) of Sea Surface Temperature - WHOI, Version 2*
 
   Clayson, Carol Anne; Brown, Jeremiah; and NOAA CDR Program (2016). NOAA Climate Data Record (CDR) of Sea Surface Temperature - WHOI, Version 2. Jan.1,2018 to Jan.31,2018. NOAA National Centers for Environmental Information. https://doi.org/10.7289/V5FB510W [2026].
@@ -29,92 +79,159 @@ Data currently supported by this version of PolarIS is:
 
   Hersbach, H., Bell, B., Berrisford, P., Biavati, G., Horányi, A., Muñoz Sabater, J., Nicolas, J., Peubey, C., Radu, R., Rozum, I., Schepers, D., Simmons, A., Soci, C., Dee, D., Thépaut, J-N. (2023): ERA5 hourly data on single levels from 1940 to present. Copernicus Climate Change Service (C3S) Climate Data Store (CDS), DOI: 10.24381/cds.adbb2d47 (Accessed on 07-02-2026)
 
----
+### **Create a local copy**
 
-## Using PolarIS
+A local copy of POLAR-IS can manage local data in the same way it is managed in the remote POLAR-IS. This copy can be tailored for the local data. Follow Dev Docs to initialize POLAR-IS.
 
-Two APIs are provided for scientists and researchers to access and explore
-the data managed by PolarIS.
+# Dev Docs
 
-**Web Interface**
+1. Overview
+    * [Pipeline visualization and definitions](#overview)
+    * [Start system](#start-system-a-b) initialize POLAR-IS from no data.
+    * [Start interfaces](#start-interfaces-c) start the frontend that allows users to access the data in the system.
+2. Details
+    * [Requirements](#project-requirements)
+    * [A. Get data](#a-get-data) how POLAR-IS gets source data.
+    * [B. Process data into POLAR-IS](#b-process-data-into-polar-is) how POLAR-IS ingests data (index, buckets, etc.).
+    * [C. Answer queries](#c-answer-queries) how queries are processed.
+3. Edit POLAR-IS
+    * [Web development](#local-web-development)
+    * [Updates](#update-code-or-dependencies)
 
-The web interface provided by PolarIS can be accessed at:
+## Overview
 
-https://iharpv.cs.umn.edu
+**General pipeline**
 
-See `api/documentation/DOCS_api.md` for a description of 
-available features.
+A. Get data:
 
-**Command-line Interface**
-
-Checkout `api/documentation/DOCS_command-line.md` for a detailed guide on 
-initializing comand-line interface as a user and as an administrator. This
-document also contains a list of available commands and error definitions.
-
-
-* *Download and install command-line interface:*
-
-The current version installs from the project repository and
-requires Python 3.12 or newer:
-
-```bash
-git clone https://github.com/ana-e-uk/polar-is.git
-cd polar-is
-python3 -m venv .venv
-.venv/bin/python -m pip install -e .
+```text
+User data interest/data request
+            |
+            ▼
+    get_remote_data.py
+            |
+            ▼
+Remote or manually obtained NetCDF files
+            |
+            ▼
+    downloaded_data.jsonl
 ```
 
-* *Initialize command-line interface* 
+B. Process data into POLAR-IS:
 
-Once `polar-is` is installed, you can connect to the default 
-server. Use `--output` to choose the initial download directory:
-
-```bash
-.venv/bin/polar-is \
-  --output ./polar-is-results
+```text
+Files described in download_data.jsonl
+            |
+            ▼
+    standardize.py
+            |
+            ▼
+Standardized source datasets, combined dataset
+            |
+            ▼
+    aggregate_data.py
+            |
+            └─ Grid catalog
+            └─ Bucket lookup
+            └─ Product datasets
+            |
+            ▼
+Product partitions + metadata.jsonl
 ```
 
-Run `help` or `?` to see a list of commands, or find more information
-in **DOCS_command-line.md**.
+C. Answer queries:
 
----
+```text
+Data managed by POLAR-IS
+            |
+            ▼
+Query planner/executor
+            |
+            ▼
+APIs
+    └─ FastAPI/React
+    └─ CLI
+```
 
-## Creating a Local Copy of PolarIS
+**Definitions:**
+| Term | Meaning in this codebase |
+|---|---|
+| Repository | A source dataset provider, such as Copernicus CDS or NOAA NCEI. |
+| Dataset | A named dataset collection from a repository, such as ERA5 or CARRA. |
+| Dataset variant | A dataset plus its instance-specific additional parameters, such as CARRA `height=15m, region=east`. |
+| Variable | A canonical scientific field, such as `sea_surface_temperature`. |
+| Grid | The complete reusable spatial geometry defining a 2D representation of Earth: latitude/longitude, projection, bounds, shape, and cell areas. |
+| Bucket | A coarse geographic lookup region used to narrow a spatial search. It is not where data are physically stored. Current configuration: 60 lon x 30 lat global grid; six columns by six rows, i.e. 36 buckets. |
+| Container | The generic name used by the grid-partition helper. Currently used to construct the bucket grid. |
+| Source | Data at the dataset’s native time cadence and native spatial resolution. |
+| Coarseness factor | Spatial grouping relative to the native grid. Factor 2 groups approximately 2×2 native cells. |
+| Product | One precomputed temporal/spatial form of a dataset, such as Day/factor-1 or Month/factor-2. Stores sufficiant statistics rather than only the final mean. Also referred to as 'derived product'. |
+| Partition/block | A physical NetCDF file containing one time range of a product or source. |
+| Partition/block index | `metadata.jsonl`, which tells the planner where partitions are and what they cover. |
+| Data object | A CLI session object containing a query’s repository, dataset, variable, region, time interval, resolution, and aggregation. |
+| Result group | One result for one matching dataset variant/grid. A broad query may return several groups. |
+| Combined | A separately materialized weighted mean dataset at a specified temporal-spatial resolution. Currently: daily, 0.5 deg. regular lat/lon grid. |
 
-A copy of PolarIS can be initialized locally. This copy will act the same as the remote PolarIS once it is set up with the remote repository access keys and other initial parameters. This local PolarIS will manage data downloads from remote repositories, data processing and storage. It provides fast and interactive query processing, and will monitor your storage to keep the most relevant data stored locally. 
+### **Start system** (pipeline parts A, B)
 
-* To start PolarIS from scratch, read `storage/documentation/DOCS_initialize.md`. To edit the initial geographical spatial partitioning, follow: `storage/documentation/HOW_TO_change-containers.md`.
+To start the database itself, provide data for POLAR-IS to ingest, then run the processes to ingest the data.
 
-* To add data to PolarIS, follow `storage/documentation/DOCS_ingest.md`.
-
-* See the next section for the basic commands to start up the server for PolarIS. More detailed instructions are found in `api/interface/README.md`.
-
-
-* *Starting PolarIS Server:*
-
-**First time:** Install and initialize virtual environment.
-
-From the repository root:
+*Source* data can be added manually to [ADD PATH] or requested and downloaded through POLAR-IS using `get_remote_data.py`. Records describing this data in [ADD FILE NAME] will be standardized, aggregated and indexed. 
 
 ```bash
+        (ADD get remote data command)
+.venv/bin/python -m storage.ingest_data.standardize
+.venv/bin/python -m storage.ingest_data.aggregate_data
+```
+
+If there are multiple datasets, `combine_data.py` creates a joint dataset combining the values of one variable from multiple datasets.
+
+```bash
+        (ADD combine data command)
+```
+
+**+++** Behind the scenes **+++**
+
+* `storage/initialize/` has driver for POLAR-IS to get remote data.
+* `storage/ingest_data/` has drivers to ingest data into the system.
+* `ADD` describes current dataset combination policy
+
+### **Start interfaces** (pipeline part C)
+
+To start the APIs:
+
+Install project
+```bash
+cd <path to project directory>/polar-is
+
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[test,plot]'
 ```
 
-* *Build the browser:*
-
-Once the project has been installed, you can build the application. Remember to also build if any changes are made to the code.
-
+Build the frontend as a single-worker FastAPI service application
 ```bash
 cd api/interface/frontend
 npm install
 npm run build
+cd ../../..
 ```
 
-* *Start FastAPI*
+Start a local or online instance of the interface. 
 
-From the repository root:
+LOCAL:
+```bash
+POLARIS_ACCESS_MODE=anonymous \
+    .venv/bin/uvicorn api.interface.app:app \
+    --host 127.0.0.1 \
+    --port 8001 \
+    --workers 1
+```
+or for local development:
+```bash
+POLARIS_ACCESS_MODE=anonymous .venv/bin/uvicorn api.interface.app:app --reload
+```
 
+ONLINE (official web interface):
 ```bash
 nohup .venv/bin/uvicorn api.interface.app:app \
   --host 0.0.0.0 \
@@ -123,109 +240,179 @@ nohup .venv/bin/uvicorn api.interface.app:app \
   > ../output.txt 2>&1 &
 ```
 
-OR start a local instance at <http://127.0.0.1:8000>:
+To use the command-line interface (CLI):
 
-```bash
-POLARIS_ACCESS_MODE=anonymous .venv/bin/uvicorn api.interface.app:app --reload
+*University server:* 
+```bash 
+.venv/bin/polar-is --output ./polar-is-results
+```
+*Local server:*
+```bash 
+.venv/bin/polar-is --server http://127.0.0.1:8000 --output ./polar-is-results
 ```
 
-See various limits and modes you can set in additional documentation.
+**+++** Behind the scenes **+++**
 
----
+* `pyproject.toml` contains dependencies, including `polar-is` entry point
+* `config.yaml` specifies database parameters (ADD doc link)
+* Possible access modes are defined in (ADD doc link)
+* FastAPI mounts `frontend/dist` at `/` when that directory exists (see app.py)
+* The queue and job registry are in memory, so the server must use one Uvicorn process. 
+* Results expire after ten minutes by default.
 
-## Extending PolarIS
+## Details
 
-PolarIS is equipt to request data from multiple remote repositories and datasets. To add a new repository that is not supported, follow: `storage/documentation/HOW_TO_add-new-repo.md`. To support a new dataset stored within a currently supported repository, follow: `storage/documentation/HOW_TO_add-new-dataset.md`. `api/interface/README.md` has the commands to use when developing the frontend.
+### Project requirements
 
----
+Software
 
-
-## Other Documentation 
-
-* `storage/documentation/DOCS_manage.md` describes how PolarIS manages data in storage.
-
-* `storage/documentation/DOCS_query.md` describes how queries are handled.
-
-
----
-
-## Server Requirements
-
-### Deployment target
-
-- Operating system:
-- Hostname and public URL:
-- Deployment user:
-- PolarIS Git branch and commit:
-- ERA5 source-data location:
-- CARRA source-data location:
-- PolarIS product-data location:
-
-### Required software
-
-- Python 3.12 or newer
+- Python >=3.12
 - Node.js 20.19+ or 22.12+
 - npm
 - Git
 - Python dependencies from `pyproject.toml`
 - ESMPy/ESMF for xESMF regridding
-- Reverse proxy such as Nginx or Apache
-- systemd or another service manager
+- Reverse proxy (e.g. Apache)
+- Service manager like systemd
 - TLS certificate for HTTPS
 
-### Hardware
+Hardware
 
-- CPU: 4 cores minimum; record actual allocation
-- RAM: 16 GB minimum; 32–64 GB recommended for ingestion
-- Storage: raw data + generated hierarchy + temporary workspace + backups
-- Free-space reserve: at least 20–30%
+- Storage: raw data + generated hierarchy + temporary workspace
 
-Final storage capacity must be calculated from the actual ERA5 and CARRA
-archives and an ingestion trial. Do not size it from source files alone.
+Credentials
 
-### Network
-
-- External HTTPS on port 443
-- FastAPI bound internally to 127.0.0.1:8001
-- Outbound HTTPS for remote data providers
-- DNS entry for the public URL
-- Firewall allowing only the reverse proxy to reach FastAPI
-
-### Credentials and security
-
-- Copernicus/CDS credentials, if remote downloads are enabled
-- `POLARIS_ACCESS_MODE`
-- API tokens when token mode is used
+- Copernicus/CDS credentials for remote downloads
 - Credentials stored outside Git
-- Writable data directories restricted to the service account
 
-### Runtime configuration
+### Pipeline part A. Get data
+**Get source data**
 
-- `POLARIS_JOB_WORKERS`
-- `POLARIS_MAX_ACTIVE_JOBS`
-- `POLARIS_MAX_QUEUED_PER_USER`
-- `POLARIS_RESULT_TTL_SECONDS`
-- Query-size limit variables
-- Source, product, catalog, temporary, and log paths
+Source files can be retireved by POLAR-IS when data interests are provided by a user. POLAR-IS uses this information to generate and send requests to remote repositories and download data. The process is driven by `get_remote_data.py` [<- WORK IN PROGRESS]. 
 
-Use one Uvicorn worker because the current job queue is in memory.
+Alternatively, source files can also be added and described in [ADD FILE NAME] manually.
 
-### Operations
+**+++** Behind the scenes **+++**
 
-- systemd service for FastAPI
-- Scheduled expired-result cleanup
-- Log rotation
-- Storage monitoring
-- Backup policy for catalogs and configuration
-- Restart and recovery procedure
+* *Extensibility:* It is possible to add access to a new repository to POLAR-IS, a new dataset from a supported repository, or a variable from a supported dataset by following the steps in (ADD doc links).
 
-### Verification
 
-- Python test result:
-- Frontend typecheck result:
-- Frontend build result:
-- API status/catalog check:
-- ERA5 test query:
-- CARRA test query:
-- Browser test:
-- CLI test:
+### Pipeline part B. Process data into POLAR-IS
+**Ingest source data**
+
+The *source* files are standardized, aggregated to generate a set of *products* at predetermined resolutions, and both the *sources* and *products* are indexed (ADD doc link).
+
+The index generated consists of *catalogs*, *buckets*, and *partition files*.
+
+For means, the executor combines the weighted sum and weight sum instead of averaging averages. The minimum and maximum use the precomputed sufficient statistics.
+
+
+**+++** Behind the scenes **+++**
+
+* `standardize.py`
+* `aggregate_data.py`
+* `combine_data.py`
+
+
+### Partline part C. Answer queries
+**Query processing**
+
+A query can be made using a CLI and a web interface. Both interfaces use the job service in `query_service.py` and `job_service.py`. 
+
+A query can be limited by estimated query duration, spatial cells, matching storage blocks, result values, number of result groups, and file output size. These limits are defined in (ADD doc link). 
+
+POLAR-IS query path is split into planning and execution:
+
+The planning stage validates the query submitted by the user via the interface or CLI. Then, it uses the dataset, partition, and bucket information to determine how to answer the query: what data is available, where and how it is stored, etc..
+
+The execution stage follows the query plan and returns the result to the user. Each result records information that was queried including the dataset, parameters, `grid_id`, etc..
+
+**+++** Behind the scenes **+++**
+
+* `datasets.jsonl` contains dataset identities and parameters.
+* `metadata.jsonl` has product partitions.
+* `<grid_id>.jsonl` stores the bucket lookups for spatial candidates.
+* `plan_query.py`
+* `executor.py`
+
+## Edit POLAR-IS
+
+### **Local web development**
+
+Terminal 1:
+
+```bash
+cd <path to project directory>/polar-is
+POLARIS_ACCESS_MODE=anonymous \
+    .venv/bin/uvicorn api.interface.app:app --reload
+```
+
+Terminal 2:
+
+```bash
+cd <path to project directory>/polar-is/api/interface/frontend
+npm run dev
+```
+
+Vite proxies `/api` to FastAPI.
+
+### **Update code or dependencies**
+
+1. Stop the service
+2. Pull the intended branch/commit
+3. Re-run the editable Python installation if dependencies changed
+4. Run `npm ci && npm run build` if frontend code or dependencies changed
+5. Restart the web interface
+6. Run tests and a small query
+
+| File                  | Elements                                                                                                                                       |
+|-----------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
+| `config.py`           | * Dataset names <br>* Variable mappings<br>* Interface-facing titles for variables, repos, etc.<br>* Reducers<br>* Limits<br>* Combined policy |
+| `aggregate_data.py`   | * Temporal/spatial product policy                                                                                                              |
+| `api/interface/`      | * `frontend/src` - Web controls and layout<br>* `app.py` - API routes and authentication                                                       |
+| `api/command_line`    | * CLI commands                                                                                                                                 |
+| `storage/query_data/` | * `query_data.py` - query planning<br>* `executor.py` - query calculation                                                                      |
+|                       |                                                                                                                                                |
+
+## Code base
+
+**Main directories**
+
+```text
+├── api/
+│   ├── command_line/
+│   └── interface/
+│       └── frontend/
+├── benchmarks/
+├── polaris/
+│   ├── services/
+│   └── visualization/
+├── storage/
+│   ├── data/
+│   │   ├── bucket_lookup/
+│   │   ├── catalogs/
+│   │   │   └── grids/
+│   │   ├── products/
+│   │   ├── regridding/
+│   │   │   └── weights/
+│   │   └── tmp/
+│   │       ├── downloaded/
+│   │       ├── query_results/
+│   │       └── standardized/
+│   ├── ingest_data/
+│   ├── initialize/
+│   │   └── get_remote_data/
+│   ├── manage/
+│   └── query_data/
+└── tests/
+```
+
+**Main files**
+
+`config.yaml`
+
+  * Specifies directories for data, query results, catalogs, grids, products, etc..
+  * Defines dataset, grid, product, and bucket catalogs
+
+- `polar-is/polaris/` code for frontend services (log queries, execute queries (jobs), etc.).
+-

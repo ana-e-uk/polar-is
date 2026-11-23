@@ -1,4 +1,4 @@
-# Polar-is web interface
+# Polar-is APIs
 
 The current interface uses FastAPI for HTTP requests and a Vite-built React/TypeScript application for the browser. FastAPI serves the production frontend from `frontend/dist` so the application has one origin.
 
