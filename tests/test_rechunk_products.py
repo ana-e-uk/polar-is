@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import xarray as xr
 
-from storage.manage.rechunk_products import rechunk_products
+from tests.update_rechunk_products import rechunk_products
 
 
 def test_rechunk_products_preserves_values_and_bounds_spatial_chunks(tmp_path):

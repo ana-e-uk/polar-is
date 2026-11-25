@@ -10,7 +10,7 @@ parameters. To make an API request, an API key must be stored on the computer ma
 
 """
 from pathlib import Path
-from storage.initialize.get_remote_data.get_remote_data import DataRow
+from storage.ingest_data.get_remote_data.get_remote_data import DataRow
 
 """
 #####################################################################################
@@ -19,8 +19,8 @@ DATASET EXECUTORS
 #
 # Imports
 #
-from storage.initialize.get_remote_data.repo__copernicusclimatedatastore.datasets import era5_single_level
-from storage.initialize.get_remote_data.repo__copernicusclimatedatastore.datasets import carra_height
+from storage.ingest_data.get_remote_data.repo__copernicusclimatedatastore.datasets import era5_single_level
+from storage.ingest_data.get_remote_data.repo__copernicusclimatedatastore.datasets import carra_height
 
 #
 # Dictionary

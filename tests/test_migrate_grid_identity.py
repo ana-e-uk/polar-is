@@ -5,7 +5,7 @@ import numpy as np
 import xarray as xr
 
 from storage.grid_topology import canonical_grid_id
-from storage.manage.migrate_grid_identity import migrate_grid_identity
+from tests.update_migrate_grid_identity import migrate_grid_identity
 
 
 def _write_jsonl(path, records):

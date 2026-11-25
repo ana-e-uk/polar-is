@@ -1,4 +1,4 @@
-"""Define hierarchical Earth partitions and map native cell centers to them."""
+"""Define hierarchical Earth partitions (buckets) and map native cell centers to them."""
 
 from __future__ import annotations
 

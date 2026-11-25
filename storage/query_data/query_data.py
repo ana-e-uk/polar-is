@@ -12,7 +12,7 @@ import re
 from typing import Any, Mapping
 
 from polaris.config import Settings, get_settings
-from storage.manage.space_containers import (
+from storage.space_containers import (
     container_definitions,
 )
 
@@ -488,7 +488,7 @@ def _overlapping_base_buckets(
     region: BoundingBox,
     settings: Settings,
 ) -> tuple[str, ...]:
-    from storage.manage.space_containers import container_grid
+    from storage.space_containers import container_grid
 
     grid = container_grid("buckets", 1, **settings.container_grid)
     definitions = container_definitions(grid)

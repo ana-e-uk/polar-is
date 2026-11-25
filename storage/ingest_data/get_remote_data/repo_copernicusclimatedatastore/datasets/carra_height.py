@@ -1,5 +1,5 @@
-from storage.initialize.get_remote_data.get_remote_data import DataRow
-from storage.initialize.get_remote_data.repo__copernicusclimatedatastore.executor import requested_years, requested_months
+from storage.ingest_data.get_remote_data.get_remote_data import DataRow
+from storage.ingest_data.get_remote_data.repo_copernicusclimatedatastore.executor import requested_years, requested_months
 from typing import Any
 
 def build_request(query: DataRow) -> dict[str, Any]:

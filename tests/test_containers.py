@@ -1,7 +1,7 @@
 import numpy as np
 import xarray as xr
 
-from storage.manage.space_containers import (
+from storage.space_containers import (
     container_definitions,
     container_for_point,
     container_grid,

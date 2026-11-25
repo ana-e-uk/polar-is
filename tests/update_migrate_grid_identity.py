@@ -1,4 +1,7 @@
-"""Normalize canonical grid IDs and deduplicate equivalent grid assets."""
+"""
+Move from one grid definition version to another.
+Normalize canonical grid IDs and deduplicate equivalent grid assets.
+"""
 
 from __future__ import annotations
 

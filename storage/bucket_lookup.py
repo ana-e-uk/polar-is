@@ -12,7 +12,7 @@ import xarray as xr
 
 from polaris.config import get_settings
 from storage.catalog import BucketWindowRecord, GridCatalogRecord
-from storage.manage.space_containers import (
+from storage.space_containers import (
     container_grid,
     container_id_from_code,
     map_containers,

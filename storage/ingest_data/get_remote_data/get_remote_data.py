@@ -36,8 +36,8 @@ REMOTE REPOSITORY EXECUTORS
 #
 # Imports
 #
-from storage.initialize.get_remote_data.repo__copernicusclimatedatastore import executor as copernicusclimatedatastore_executor
-from storage.initialize.get_remote_data.repo_nasaearthdata import executor as nasaearthdata_executor
+from storage.ingest_data.get_remote_data.repo__copernicusclimatedatastore import executor as copernicusclimatedatastore_executor
+from storage.ingest_data.get_remote_data.repo_nasaearthdata import executor as nasaearthdata_executor
 
 #
 # Dictionary

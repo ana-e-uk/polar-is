@@ -1,16 +1,17 @@
 # POLAR-IS
 
 Sections:
-- [Services](#services) lists services of POLAR-IS and overview of commands to use them.
-- [Dev Docs](#dev-docs) provides development information and more detailed description of the POLAR-IS internals.
+- [Overview](#overview) lists services and general commands of POLAR-IS.
+- [Dev Docs](#dev-docs) provides a more detailed description of the POLAR-IS internals.
 
-## Services
+## Overview
 
-1. Access data through a [Web interface](#access-data-through-web-interface) and [Command-line interface](#access-data-through-command-line-interface)
-  * Full documentation on APIs: [api.md](/api/documentation/api.md)
-2. [Query data](#query-data)
-3. [Available data](#available-data)
-4. [Create a local copy of POLAR-IS](#create-a-local-copy)
+1. Access POLAR-IS through a [Web interface](#access-data-through-web-interface) and [Command-line interface](#access-data-through-command-line-interface)
+    * Full documentation on APIs: [api.md](/api/documentation/api.md)
+2. POLAR-IS services:
+    * [Query data](#query-data)
+    * [Available data](#available-data)
+3. Create a POLAR-IS copy [locally](#create-a-local-copy)
 
 ### **Access data through web interface**
 
@@ -36,13 +37,9 @@ python3 -m venv .venv
   --output ./polar-is-results
 ```
 
-`--output` sets the initial download directory.
+  * `--output` sets the initial download directory.
 
-Run `help` or `?` to see a list of commands, or find more information in (ADD doc link).
-
-**+++** Behind the scenes **+++**
-
-* Command-line interface [documentation](/api/documentation/command-line.md).
+  * Run `help` or `?` to see a list of commands, or find more information in the command-line interface [documentation](/api/documentation/command-line.md).
 
 ### **Query data**
 
@@ -81,22 +78,22 @@ A query can be made using the CLI and the web interface. Accepted jobs are added
 
 ### **Create a local copy**
 
-A local copy of POLAR-IS can manage local data in the same way it is managed in the remote POLAR-IS. This copy can be tailored for the local data. Follow Dev Docs to initialize POLAR-IS.
+A local copy of POLAR-IS can manage local data in the same way it is managed in the remote POLAR-IS. This copy can be tailored for the local data. Follow [Dev Docs](#dev-docs) to initialize POLAR-IS.
 
 # Dev Docs
 
 1. Overview
     * [Pipeline visualization and definitions](#overview)
     * [Start system](#start-system-a-b) initialize POLAR-IS from no data.
-    * [Start interfaces](#start-interfaces-c) start the frontend that allows users to access the data in the system.
+    * [Start interfaces](#start-interfaces-c) start the frontend APIs to access data in POLAR-IS.
 2. Details
     * [Requirements](#project-requirements)
     * [A. Get data](#a-get-data) how POLAR-IS gets source data.
-    * [B. Process data into POLAR-IS](#b-process-data-into-polar-is) how POLAR-IS ingests data (index, buckets, etc.).
-    * [C. Answer queries](#c-answer-queries) how queries are processed.
+    * [B. Process data into POLAR-IS](#b-process-data-into-polar-is) how POLAR-IS ingests data (indexing, aggregating, etc.).
+    * [C. Answer queries](#c-answer-queries) how queries are handled.
 3. Edit POLAR-IS
     * [Web development](#local-web-development)
-    * [Updates](#update-code-or-dependencies)
+    * [Code updates](#update-code-or-dependencies)
 
 ## Overview
 
@@ -174,12 +171,12 @@ APIs
 
 ### **Start system** (pipeline parts A, B)
 
-To start the database itself, provide data for POLAR-IS to ingest, then run the processes to ingest the data.
+**1. Provide Data:** *Source* data can be added manually to the[downloaded_data](storage/data/tmp/downloaded/) directory or requested and downloaded through the process described in [storage.md](storage/documentation/storage.md). 
 
-*Source* data can be added manually to [ADD PATH] or requested and downloaded through POLAR-IS using `get_remote_data.py`. Records describing this data in [ADD FILE NAME] will be standardized, aggregated and indexed. 
+**2. Ingest Data:** [downloaded_data.jsonl](storage/data/tmp/downloaded/downloaded_data.jsonl) should describe the data to be processed into POLAR-IS. `standardize.py` and `aggregate_data.py` will read this file and ingest all data described in it.
 
 ```bash
-        (ADD get remote data command)
+.venv/bin/python -m storage.ingest_data.get_remote_data
 .venv/bin/python -m storage.ingest_data.standardize
 .venv/bin/python -m storage.ingest_data.aggregate_data
 ```
@@ -187,14 +184,8 @@ To start the database itself, provide data for POLAR-IS to ingest, then run the 
 If there are multiple datasets, `combine_data.py` creates a joint dataset combining the values of one variable from multiple datasets.
 
 ```bash
-        (ADD combine data command)
+.venv/bin/python -m storage.ingest_data.combine_data
 ```
-
-**+++** Behind the scenes **+++**
-
-* `storage/initialize/` has driver for POLAR-IS to get remote data.
-* `storage/ingest_data/` has drivers to ingest data into the system.
-* `ADD` describes current dataset combination policy
 
 ### **Start interfaces** (pipeline part C)
 
@@ -254,8 +245,7 @@ To use the command-line interface (CLI):
 **+++** Behind the scenes **+++**
 
 * `pyproject.toml` contains dependencies, including `polar-is` entry point
-* `config.yaml` specifies database parameters (ADD doc link)
-* Possible access modes are defined in (ADD doc link)
+* [`config.yaml`](config.yaml) specifies database parameters
 * FastAPI mounts `frontend/dist` at `/` when that directory exists (see app.py)
 * The queue and job registry are in memory, so the server must use one Uvicorn process. 
 * Results expire after ten minutes by default.
@@ -290,17 +280,17 @@ Credentials
 
 Source files can be retireved by POLAR-IS when data interests are provided by a user. POLAR-IS uses this information to generate and send requests to remote repositories and download data. The process is driven by `get_remote_data.py` [<- WORK IN PROGRESS]. 
 
-Alternatively, source files can also be added and described in [ADD FILE NAME] manually.
+Alternatively, source files can also be added and described in [downloaded_data.jsonl](storage/data/tmp/downloaded/downloaded_data.jsonl) manually.
 
 **+++** Behind the scenes **+++**
 
-* *Extensibility:* It is possible to add access to a new repository to POLAR-IS, a new dataset from a supported repository, or a variable from a supported dataset by following the steps in (ADD doc links).
+* *Extensibility:* It is possible to add access to a new repository to POLAR-IS, a new dataset from a supported repository, or a variable from a supported dataset by following the steps in the *HOW_TO_* [docs](storage/documentation/).
 
 
 ### Pipeline part B. Process data into POLAR-IS
 **Ingest source data**
 
-The *source* files are standardized, aggregated to generate a set of *products* at predetermined resolutions, and both the *sources* and *products* are indexed (ADD doc link).
+The *source* files are standardized, aggregated to generate a set of *products* at predetermined resolutions, and both the *sources* and *products* are indexed.
 
 The index generated consists of *catalogs*, *buckets*, and *partition files*.
 
@@ -319,7 +309,7 @@ For means, the executor combines the weighted sum and weight sum instead of aver
 
 A query can be made using a CLI and a web interface. Both interfaces use the job service in `query_service.py` and `job_service.py`. 
 
-A query can be limited by estimated query duration, spatial cells, matching storage blocks, result values, number of result groups, and file output size. These limits are defined in (ADD doc link). 
+A query can be limited by estimated query duration, spatial cells, matching storage blocks, result values, number of result groups, and file output size (see [api.md](api/documentation/api.md) for more info).
 
 POLAR-IS query path is split into planning and execution:
 
@@ -332,8 +322,6 @@ The execution stage follows the query plan and returns the result to the user. E
 * `datasets.jsonl` contains dataset identities and parameters.
 * `metadata.jsonl` has product partitions.
 * `<grid_id>.jsonl` stores the bucket lookups for spatial candidates.
-* `plan_query.py`
-* `executor.py`
 
 ## Edit POLAR-IS
 
@@ -372,7 +360,8 @@ Vite proxies `/api` to FastAPI.
 | `api/interface/`      | * `frontend/src` - Web controls and layout<br>* `app.py` - API routes and authentication                                                       |
 | `api/command_line`    | * CLI commands                                                                                                                                 |
 | `storage/query_data/` | * `query_data.py` - query planning<br>* `executor.py` - query calculation                                                                      |
-|                       |                                                                                                                                                |
+| `polaris/`            | * Frontend services used by both APIs (log queries, execute queries (jobs). etc.)                                                              |
+| `storage/`            | * Defines objects and code pertaining to the index and data<br>* Where data is stored
 
 ## Code base
 
@@ -400,19 +389,7 @@ Vite proxies `/api` to FastAPI.
 │   │       ├── query_results/
 │   │       └── standardized/
 │   ├── ingest_data/
-│   ├── initialize/
 │   │   └── get_remote_data/
-│   ├── manage/
 │   └── query_data/
 └── tests/
 ```
-
-**Main files**
-
-`config.yaml`
-
-  * Specifies directories for data, query results, catalogs, grids, products, etc..
-  * Defines dataset, grid, product, and bucket catalogs
-
-- `polar-is/polaris/` code for frontend services (log queries, execute queries (jobs), etc.).
--

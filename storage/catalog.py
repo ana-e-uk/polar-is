@@ -1,6 +1,6 @@
 """Small, JSON-serializable records for the storage catalogs and index.
 
-The grid catalog describes canonical full grids.  Product coverage is described
+The grid catalog describes canonical full grids. Product coverage is described
 separately by its global grid window, so cropped products from the same grid
 retain the same ``grid_id``.
 """
